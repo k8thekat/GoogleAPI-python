@@ -1,0 +1,5 @@
+*.vscode/
+*.json
+*__**
+*.venv/
+calendar_ids.py
