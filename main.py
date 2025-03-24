@@ -25,7 +25,7 @@ test_event: Events = Events(
     calendar_id="primary",
     **{
         "summary": "Testing...",
-        "location": "4025 251st Way NE, Redmond, WA 98053",
+        "location": "400 Broad St, Seattle, WA 98109",
         "description": "TICKET_ID: XXXXXXX",
         "start": {
             "dateTime": datetime.now().isoformat(),
