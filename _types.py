@@ -5,6 +5,14 @@ from typing import TYPE_CHECKING, Any, TypedDict
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from _enums import (
+        MailFormatEnum,
+        MailLabelColorEnum,
+        MailLabelListVisiblityEnum,
+        MailMessageListVisibilityEnum,
+        MailTypeEnum,
+    )
+
 
 class EventTime(TypedDict, total=False):
     date: str
@@ -70,3 +78,21 @@ class EventListsTyped(TypedDict, total=False):
 class RemindersTyped(TypedDict, total=False):
     method: str
     minutes: int
+
+
+class LabelID(TypedDict):
+    name: str
+    id: str
+
+
+class MailLabelTyped(TypedDict, total=False):
+    id: str
+    name: str
+    messageListVisibility: MailMessageListVisibilityEnum
+    labelListVisibility: MailLabelListVisiblityEnum
+    type: MailTypeEnum
+    messagesTotal: int
+    messagesUnread: int
+    threadsTotal: int
+    threadsUnread: int
+    color: MailLabelColorEnum

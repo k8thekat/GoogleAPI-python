@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import base64
+from email.message import EmailMessage
 from enum import IntEnum, StrEnum
 from pprint import pprint
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 from googleapiclient.discovery import Resource
 
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
-    from _types import EventListsTyped, EventsTyped, EventTime, EventUser
+    from _enums import (
+        MailFormatEnum,
+        MailLabelColorEnum,
+        MailLabelListVisiblityEnum,
+        MailMessageListVisibilityEnum,
+        MailTypeEnum,
+    )
+    from _types import EventListsTyped, EventsTyped, EventTime, EventUser, MailLabelTyped
 
 
 class LocalTimeZone(StrEnum):
@@ -238,3 +247,212 @@ class CalendarColor(IntEnum):
     bold_blue = 9
     bold_green = 10
     bold_red = 11
+
+
+class MailUser(Resource):
+    def getProfile(self, **kwargs: Any) -> MailUserProfile:
+        return super().getProfile(**kwargs)  # type: ignore
+
+    def users(self, **kwargs: Any) -> MailUser:
+        return super().users(**kwargs)  # type: ignore
+
+    def labels(self, **kwargs: Any) -> MailUserLabel:
+        return super().users().labels(**kwargs)  # type: ignore
+
+    def drafts(self, **kwargs: Any) -> MailDraft:
+        return super().users().drafts(**kwargs)  # type: ignore
+
+
+class MailUserProfile(Resource):
+    emailAddress: str
+    messagesTotal: int
+    threadsTotal: int
+    historyId: str
+
+
+class MailUserLabel(Resource, dict):
+    """
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels
+    """
+
+    id: str
+    name: str
+    messageListVisibility: MailMessageListVisibilityEnum
+    labelListVisibility: MailLabelListVisiblityEnum
+    type: MailTypeEnum
+    messagesTotal: int
+    messagesUnread: int
+    threadsTotal: int
+    threadsUnread: int
+    color: MailLabelColorEnum
+
+    def __init__(self, **kwargs: MailLabelTyped) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def list(self, **kwargs: Any) -> HttpRequest:
+        """
+        List of labels. Note that each label resource only contains an id, name, messageListVisibility, labelListVisibility, and type. The labels.get method can fetch additional label details.
+
+        """
+        return super().list(**kwargs)  # type: ignore
+
+    def create(self, **kwargs: Any) -> HttpRequest:
+        return super().create(**kwargs)  # type: ignore
+
+
+class MailDraft(Resource, dict):
+    id: str
+    message: MailMessage
+
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if key == "message":
+                setattr(self, "message", MailMessage(draft_id=self.id, **value))
+            else:
+                setattr(self, key, value)
+
+    def __repr__(self) -> str:
+        return f"Mail Draft: {self.id} | Mail Message: {self.message}"
+
+    def create(self, **kwargs: Any) -> HttpRequest:
+        return super().create(**kwargs)  # type: ignore
+
+    def delete(self, **kwargs: Any) -> None:
+        return super().delete(**kwargs)  # type: ignore
+
+    def get(self, **kwargs: Any) -> HttpRequest:
+        return super().get(**kwargs)  # type: ignore
+
+    def list(self, **kwargs: Any) -> HttpRequest:
+        return super().list(**kwargs)  # type: ignore
+
+    def send(self) -> HttpRequest:
+        return super().send()  # type: ignore
+
+    def update(self, **kwargs: Any) -> HttpRequest:
+        return super().update(**kwargs)  # type: ignore
+
+
+class MailDraftList(Resource, dict):
+    """
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/list
+    """
+
+    drafts: list[MailDraft]
+    nextPageToken: str
+    resultSizeEstimate: int
+
+
+class MailMessage(EmailMessage, Resource, dict):
+    """
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages
+    """
+
+    id: str
+    draft_id: str
+    threadId: str
+    labelIds: list[str]
+    snippet: str
+    historyId: str
+    internalDate: str
+    payload: MailMessagePart
+    sizeEstimate: int
+    raw: str
+
+    def __init__(self, draft_id: str = "", **kwargs: Any) -> None:
+        setattr(self, "draft_id", draft_id)
+        setattr(self, "raw", "")
+        setattr(self, "payload", MailMessagePart())
+        for key, value in kwargs.items():
+            if key == "payload":
+                setattr(self, key, MailMessagePart(**value))
+            else:
+                setattr(self, key, value)
+
+    def to_email(
+        self,
+        to_email: str | list[str],
+        from_email: str | list[str],
+        subject: str = " ",
+        body: str = " ",
+    ) -> MailMessage:
+        super().__init__()
+        self.set_content(body)
+        self["To"] = to_email
+        self["From"] = from_email
+        self["Subject"] = subject
+        return self
+
+    def to_base64(self) -> str:
+        return base64.urlsafe_b64encode(self.as_bytes()).decode()
+
+    def prepared(self) -> dict:
+        """
+        Returns a pre-formed dict with the passed in encoded EmailMessage.
+        """
+        return {"message": {"raw": self.to_base64()}}
+
+    def update_email(self, body: str) -> MailMessage:
+        subject = ""
+        to_email = ""
+        from_email = ""
+        for e in self.payload.headers:
+            if e.name == "Subject":
+                subject: str = e.value
+            if e.name == "To":
+                to_email: str = e.value
+            if e.name == "From":
+                from_email: str = e.value
+
+        return self.to_email(to_email=to_email, from_email=from_email, subject=subject, body=(self.payload.body.data + body))
+
+    def __repr__(self) -> str:
+        return f"Mail Message Details:\nID: {self.id}\nLabels: {self.labelIds}\nThread ID:{self.threadId}\nContent: {self.payload.body.data}"
+
+    def __str__(self) -> str:
+        """
+        This is to overwrite :class:`EmailMessage` built-ins.
+        """
+        return self.__repr__()
+
+
+class MailMessagePart(dict):
+    partId: str
+    mimeType: str
+    headers: list[MailMessageHeader]
+    body: MailMessageBody
+    parts: list[MailMessagePart]
+    filename: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if key == "headers":
+                setattr(self, key, [MailMessageHeader(**i) for i in value])
+            elif key == "body":
+                setattr(self, key, MailMessageBody(**value))
+            else:
+                setattr(self, key, value)
+
+
+class MailMessageHeader(dict):
+    name: str  # The name of the header before the : separator. For example, To.
+    value: str  # The value of the header after the : separator. For example, someuser@example.com.
+
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class MailMessageBody(dict):
+    attachmentId: str
+    size: int
+    data: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        setattr(self, "data", "")
+        for key, value in kwargs.items():
+            if key == "data":
+                setattr(self, key, base64.urlsafe_b64decode(value).decode())
+            else:
+                setattr(self, key, value)

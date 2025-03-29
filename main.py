@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
+from pprint import pprint
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 # google-api-python-client google-auth-httplib2 google-auth-oauthlib
@@ -10,57 +13,81 @@ from google.oauth2.credentials import Credentials as Credentials_oa
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import HttpRequest
 
+from _enums import (
+    MailFormatEnum,
+    MailLabelColorEnum,
+    MailLabelListVisiblityEnum,
+    MailMessageListVisibilityEnum,
+    MailTypeEnum,
+)
 from calendar_ids import ids as Calendar_IDS
-from modules import Calendar, CalendarColor, CalendarList, CalendarListEntry, Events, EventsList, LocalTimeZone
+from modules import (
+    Calendar,
+    CalendarColor,
+    CalendarList,
+    CalendarListEntry,
+    Events,
+    EventsList,
+    LocalTimeZone,
+    MailDraft,
+    MailMessage,
+    MailUser,
+    MailUserLabel,
+)
 
 if TYPE_CHECKING:
     from google.auth.external_account_authorized_user import Credentials
     from googleapiclient.http import HttpRequest
 
-    from _types import CalendarID
+    from _types import CalendarID, LabelID
 
 
-test_event: Events = Events(
-    calendar_id="primary",
-    **{
-        "summary": "Testing...",
-        "location": "400 Broad St, Seattle, WA 98109",
-        "description": "TICKET_ID: XXXXXXX",
-        "start": {
-            "dateTime": datetime.now().isoformat(),
-            "timeZone": "America/Los_Angeles",
-        },
-        "end": {
-            "dateTime": (datetime.now() + timedelta(hours=4)).isoformat(),
-            "timeZone": "America/Los_Angeles",
-        },
-        "reminders": {"useDefault": True},
-        # "attendees": [{"email": "cadwalladerkatelynn@gmail.com"}],  # leave this blank to auto accept the event.
-        "colorId": CalendarColor.bold_red,
-    },
-)
+# test_event: Events = Events(
+#     calendar_id="primary",
+#     **{
+#         "summary": "Testing...",
+#         "location": "400 Broad St, Seattle, WA 98109",
+#         "description": "TICKET_ID: XXXXXXX",
+#         "start": {
+#             "dateTime": datetime.now().isoformat(),
+#             "timeZone": "America/Los_Angeles",
+#         },
+#         "end": {
+#             "dateTime": (datetime.now() + timedelta(hours=4)).isoformat(),
+#             "timeZone": "America/Los_Angeles",
+#         },
+#         "reminders": {"useDefault": True},
+#         # "attendees": [{"email": "cadwalladerkatelynn@gmail.com"}],  # leave this blank to auto accept the event.
+#         "colorId": CalendarColor.bold_red,
+#     },
+# )
 
 
-def main() -> None:
-    """Shows basic usage of the Google Calendar API.
-    Prints the start and name of the next 10 events on the user's calendar.
-    """
-    c_id = "cadwalladerkatelynn@gmail.com"
-    try:
-        temp: Events = CalendarService().create_event(event=test_event, calendar_id=c_id)
-        temp.summary = "Edited Event via API..."
-        input("Event Created..continue?")
-        e_temp: Events = CalendarService().update_event(temp)
-        input("Event Updated... continue?")
-        CalendarService().delete_event(e_temp)
-
-    except HttpError as error:
-        print(f"An error occurred: {error}")
+# test_label: MailUserLabel = MailUserLabel(
+#     **{
+#         "id": "123456",
+#         "name": "Test Label",
+#         "messageListVisilibity": MailMessageListVisibilityEnum.show,
+#         "labelListVisibility": MailLabelListVisiblityEnum.label_show,
+#         "type": MailTypeEnum.user,
+#         "color": MailLabelColorEnum.light_blue,
+#     },
+# )
+# test_email: EmailMessage = EmailMessage()
+# test_email = MailMessage().to_email(
+#     to_email="test@gmail.com",
+#     from_email="the_doctor@gmail.com",
+#     subject="UPDATED Second test DRAFT CREATION~",
+#     body="UPDATED UNK..",
+# )
 
 
 class CalendarService:
     service: Calendar
+    service_name: ClassVar[str] = "calendar"
+    service_version: ClassVar[str] = "v3"
     creds: Credentials_oa | Credentials | None
     SCOPES: ClassVar[list[str]] = [
         "https://www.googleapis.com/auth/calendar",
@@ -73,8 +100,8 @@ class CalendarService:
         # created automatically when the authorization flow completes for the first
         # time.
         self.creds = None
-        if Path("token.json").exists():
-            self.creds = Credentials_oa.from_authorized_user_file(filename="token.json", scopes=self.SCOPES)
+        if Path("calendar_token.json").exists():
+            self.creds = Credentials_oa.from_authorized_user_file(filename="calendar_token.json", scopes=self.SCOPES)
         # If there are no (valid) credentials available, let the user log in.
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
@@ -85,7 +112,7 @@ class CalendarService:
                 )
                 self.creds = flow.run_local_server(port=0)
             # Save the credentials for the next run
-            with Path("token.json").open(mode="w") as token:
+            with Path("calendar_token.json").open(mode="w") as token:
                 token.write(self.creds.to_json())
 
         self.service = build(serviceName="calendar", version="v3", credentials=self.creds)
@@ -270,5 +297,113 @@ class CalendarService:
         return Events(calendar_id=event.calendar_id, **temp.execute())
 
 
-if __name__ == "__main__":
-    main()
+class MailService:
+    service: MailUser
+    service_name: ClassVar[str] = "gmail"
+    service_version: ClassVar[str] = "v1"
+    creds: Credentials_oa | Credentials | None
+    SCOPES: ClassVar[list[str]] = [
+        "https://mail.google.com/",
+    ]
+    # https://developers.google.com/workspace/gmail/api/quickstart/python
+    LABELS: list[LabelID]
+
+    def __init__(self) -> None:
+        # The file token.json stores the user's access and refresh tokens, and is
+        # created automatically when the authorization flow completes for the first
+        # time.
+        self.creds = None
+        if Path("mail_token.json").exists():
+            self.creds = Credentials_oa.from_authorized_user_file(filename="mail_token.json", scopes=self.SCOPES)
+        # If there are no (valid) credentials available, let the user log in.
+        if not self.creds or not self.creds.valid:
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                self.creds.refresh(request=Request())
+            else:
+                flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(
+                    client_secrets_file="mail_client_secret.json", scopes=self.SCOPES
+                )
+                self.creds = flow.run_local_server(port=0)
+            # Save the credentials for the next run
+            with Path("mail_token.json").open(mode="w") as token:
+                token.write(self.creds.to_json())
+
+        self.service = build(serviceName=self.service_name, version=self.service_version, credentials=self.creds)
+
+    def get_labels(self, user_id: str = "me") -> list[MailUserLabel]:
+        """
+        Gets all the labels related to the Google Mail Account.
+
+        Will also update our "LABELS" attribute.
+
+        Parameters
+        -----------
+        user_id: :class:`str`, optional
+            The ID of the Google Account, by default "me".
+
+        Returns
+        --------
+        :class:`list[MailUserLabel]`
+            A list of MailUserLabel objects.
+        """
+
+        temp = self.service.users().labels().list(userId=user_id).execute()
+        res: list[MailUserLabel] = [MailUserLabel(**i) for i in temp.get("labels")]
+        labels: list[LabelID] = getattr(self, "LABELS", [])
+        labels.extend({"name": label.name, "id": label.id} for label in res)
+        setattr(self, "LABELS", labels)
+        return res
+
+    def create_draft(self, body: MailMessage, user_id: str = "me") -> MailDraft:
+        temp = self.service.users().drafts().create(userId=user_id, body=body.prepared()).execute()
+        return MailDraft(**temp)
+
+    def get_draft(
+        self, message_id: str, message_format: MailFormatEnum | None = None, user_id: str = "me"
+    ) -> MailMessage | None:
+        """
+        Get an existing Draft from our Mailbox.
+
+        Parameters
+        -----------
+        message_id: :class:`str`
+            The ID of the message to search for, this is the :class:`MailDraft.id` attribute.
+        message_format: :class:`MailFormatEnum`, optional
+            The Type of format to return the message in, by default MailFormatEnum.raw.
+        user_id: :class:`str`, optional
+            The Google User ID to search under, by default "me".
+
+        Returns
+        --------
+        :class:`MailMessage`
+            _description_.
+        """
+        if not message_id.startswith("r"):
+            raise ValueError("Your message_id is not of the right type. It will start with an 'r'")
+        try:
+            if message_format is None:
+                temp: HttpRequest = self.service.users().drafts().get(userId=user_id, id=message_id)
+            else:
+                temp: HttpRequest = self.service.users().drafts().get(userId=user_id, id=message_id, format=message_format)
+        except HttpError as e:
+            print(e)
+            return None
+        res = MailDraft(**temp.execute())
+        return res.message
+
+    def update_draft(self, message_id: str, body: MailMessage, user_id: str = "me") -> MailMessage:
+        temp: HttpRequest = self.service.users().drafts().update(userId=user_id, id=message_id, body=body.prepared())
+        res = MailDraft(**temp.execute())
+        return res.message
+
+    def append_draft(self, message_id: str, body: str, user_id: str = "me") -> MailMessage | None:
+        temp: MailMessage | None = self.get_draft(message_id=message_id, message_format=MailFormatEnum.full, user_id=user_id)
+        if temp is None:
+            print(f"Failed to find the Draft Message ID provided. | {message_id}")
+            return None
+        res: MailMessage = self.update_draft(message_id=message_id, body=temp.update_email(body=body))
+        return res
+
+
+# if __name__ == "__main__":
+#     main()
