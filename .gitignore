@@ -1,5 +1,6 @@
 *.vscode/
 *.json
-*__**
+**__pycache__**
 *.venv/
 calendar_ids.py
+*build
