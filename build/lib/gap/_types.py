@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from ._enums import (
-        MailFormatEnum,
-        MailLabelColorEnum,
-        MailLabelListVisiblityEnum,
-        MailMessageListVisibilityEnum,
-        MailTypeEnum,
-    )
+    from ._enums import MailFormatEnum, MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
 
 
 class EventTime(TypedDict, total=False):

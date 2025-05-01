@@ -17,18 +17,7 @@ from ._enums import MailFormatEnum
 
 # todo - Be able to generate a list of calendar ID's or make a class method to perform the action first?
 from .calendar_ids import ids as Calendar_IDS
-from .modules import (
-    Calendar,
-    CalendarList,
-    CalendarListEntry,
-    Events,
-    EventsList,
-    LocalTimeZone,
-    MailDraft,
-    MailMessage,
-    MailUser,
-    MailUserLabel,
-)
+from .modules import Calendar, CalendarList, CalendarListEntry, Events, EventsList, LocalTimeZone, MailDraft, MailMessage, MailUser, MailUserLabel
 
 if TYPE_CHECKING:
     from google.auth.external_account_authorized_user import Credentials
@@ -63,9 +52,7 @@ class CalendarService:
         # time.
         self.creds = None
         if token_path.joinpath("calendar_token.json").exists():
-            self.creds = Credentials_oa.from_authorized_user_file(
-                filename=token_path.joinpath("calendar_token.json"), scopes=self.SCOPES
-            )
+            self.creds = Credentials_oa.from_authorized_user_file(filename=token_path.joinpath("calendar_token.json"), scopes=self.SCOPES)
         # If there are no (valid) credentials available, let the user log in.
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
@@ -294,9 +281,7 @@ class MailService:
             if self.creds and self.creds.expired and self.creds.refresh_token:
                 self.creds.refresh(request=Request())
             else:
-                flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(
-                    client_secrets_file="mail_client_secret.json", scopes=self.SCOPES
-                )
+                flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(client_secrets_file="mail_client_secret.json", scopes=self.SCOPES)
                 self.creds = flow.run_local_server(port=0)
             # Save the credentials for the next run
             with Path("mail_token.json").open(mode="w") as token:
@@ -332,9 +317,7 @@ class MailService:
         temp = self.service.users().drafts().create(userId=user_id, body=body.prepared()).execute()
         return MailDraft(**temp)
 
-    def get_draft(
-        self, message_id: str, message_format: MailFormatEnum | str | None = None, user_id: str = "me"
-    ) -> MailMessage | None:
+    def get_draft(self, message_id: str, message_format: MailFormatEnum | str | None = None, user_id: str = "me") -> MailMessage | None:
         """
         Get an existing Draft from our Mailbox.
 

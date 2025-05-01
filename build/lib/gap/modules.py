@@ -4,14 +4,14 @@ import base64
 from email.message import EmailMessage
 from enum import IntEnum, StrEnum
 from pprint import pprint
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 from googleapiclient.discovery import Resource
 
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
-    from ._enums import MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
+    from ._enums import MailFormatEnum, MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
     from ._types import EventListsTyped, EventsTyped, EventTime, EventUser, MailLabelTyped
 
 
