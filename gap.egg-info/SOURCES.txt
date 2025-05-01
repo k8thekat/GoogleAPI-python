@@ -1,0 +1,14 @@
+LICENSE
+pyproject.toml
+requirements.txt
+gap/__init__.py
+gap/_enums.py
+gap/_types.py
+gap/calendar_ids.py
+gap/modules.py
+gap/services.py
+gap.egg-info/PKG-INFO
+gap.egg-info/SOURCES.txt
+gap.egg-info/dependency_links.txt
+gap.egg-info/requires.txt
+gap.egg-info/top_level.txt
