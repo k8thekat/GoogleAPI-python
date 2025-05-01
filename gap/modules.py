@@ -11,14 +11,8 @@ from googleapiclient.discovery import Resource
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
-    from _enums import (
-        MailFormatEnum,
-        MailLabelColorEnum,
-        MailLabelListVisiblityEnum,
-        MailMessageListVisibilityEnum,
-        MailTypeEnum,
-    )
-    from _types import EventListsTyped, EventsTyped, EventTime, EventUser, MailLabelTyped
+    from ._enums import MailFormatEnum, MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
+    from ._types import EventListsTyped, EventsTyped, EventTime, EventUser, MailLabelTyped
 
 
 class LocalTimeZone(StrEnum):

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import configparser
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Union
-
-from _enums import MailFormatEnum
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 # google-api-python-client google-auth-httplib2 google-auth-oauthlib
 from google.auth.transport.requests import Request
@@ -14,29 +13,24 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest
 
-from gap.modules import (
-    Calendar,
-    CalendarList,
-    CalendarListEntry,
-    Events,
-    EventsList,
-    LocalTimeZone,
-    MailDraft,
-    MailMessage,
-    MailUser,
-    MailUserLabel,
-)
+from ._enums import MailFormatEnum
 
 # todo - Be able to generate a list of calendar ID's or make a class method to perform the action first?
-from ..calendar_ids import ids as Calendar_IDS
+from .calendar_ids import ids as Calendar_IDS
+from .modules import Calendar, CalendarList, CalendarListEntry, Events, EventsList, LocalTimeZone, MailDraft, MailMessage, MailUser, MailUserLabel
 
 if TYPE_CHECKING:
-    from _types import CalendarID, LabelID
     from google.auth.external_account_authorized_user import Credentials
     from googleapiclient.http import HttpRequest
 
+    from ._types import CalendarID, LabelID
+
 
 class CalendarService:
+    """
+    Store the calendar_token.json and calendar_secret.json file in the same directory as the `services.py` file and point `token_path` to their directory.
+    """
+
     service: Calendar
     service_name: ClassVar[str] = "calendar"
     service_version: ClassVar[str] = "v3"
@@ -47,32 +41,49 @@ class CalendarService:
 
     CALENDARIDS: ClassVar[list[CalendarID]] = Calendar_IDS
 
-    def __init__(self) -> None:
+    def __init__(self, token_path: Path) -> None:
+        """
+        Parameters:
+        token_path: :class:`Path`
+            Must point to the directory which contains your "calendar_secret.json" from Google API.
+        """
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
         # time.
         self.creds = None
-        if Path("calendar_token.json").exists():
-            self.creds = Credentials_oa.from_authorized_user_file(filename="calendar_token.json", scopes=self.SCOPES)
+        if token_path.joinpath("calendar_token.json").exists():
+            self.creds = Credentials_oa.from_authorized_user_file(filename=token_path.joinpath("calendar_token.json"), scopes=self.SCOPES)
         # If there are no (valid) credentials available, let the user log in.
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
                 self.creds.refresh(request=Request())
             else:
                 flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(
-                    client_secrets_file="client_secret.json", scopes=self.SCOPES
+                    client_secrets_file=token_path.joinpath("client_secret.json"), scopes=self.SCOPES
                 )
                 self.creds = flow.run_local_server(port=0)
             # Save the credentials for the next run
-            with Path("calendar_token.json").open(mode="w") as token:
+            with token_path.joinpath("calendar_token.json").open(mode="w") as token:
                 token.write(self.creds.to_json())
 
         self.service = build(serviceName="calendar", version="v3", credentials=self.creds)
 
+    # todo - Fully implement support for ini parsing instead of using json files.
+    def setup(self, path: Path) -> Any:
+        parser = configparser.ConfigParser()
+        if isinstance(path, Path) and path.exists():
+            parser.read(filenames=path)
+            if "FreshDesk" in parser.sections():
+                tokens: configparser.SectionProxy = parser["FreshDesk"]
+                return (tokens.get("url", ""), tokens.get("token", ""))
+
+        else:
+            raise ValueError("Failed to find `FreshDesk` section in token.ini file.")
+
+    # todo - Rebuild how or what we use as a class/object to unpack all our data.
     def create_event(
         self,
         event: Events,
-        calendar_id: str = "primary",
     ) -> Events:
         """
         Create an event for the calendar_id passed in.
@@ -81,16 +92,14 @@ class CalendarService:
         -----------
         event: :class:`Events`
             A Event class to pull the proper fields from.
-        calendar_id: :class:`str`, optional
-            The Calendar ID to be used, by default "primary".
 
         Returns
         --------
         :class:`Events`
             An :class:`Events` class from the response.
         """
-        temp: HttpRequest = self.service.events().insert(calendarId=calendar_id, body=event.__dict__)
-        res = Events(calendar_id=calendar_id, **temp.execute())
+        temp: HttpRequest = self.service.events().insert(calendarId=event.calendar_id, body=event.__dict__)
+        res = Events(calendar_id=event.calendar_id, **temp.execute())
 
         return res
 
@@ -171,6 +180,7 @@ class CalendarService:
             "updated": Order by last modification time (ascending).
         """
         # TODO - See about storing calendar_id to each event.
+        since_time = since_time.replace(tzinfo=None)
         return EventsList(
             calendar_id=calendar_id,
             **self.service.events()
@@ -220,8 +230,7 @@ class CalendarService:
             calendar = self.CALENDARIDS
         temp: list[Events] = []
         for e in calendar:
-            res: EventsList = CalendarService().get_calendar_events_by_date(
-                since_time=datetime.now(),
+            res: EventsList = self.get_calendar_events_by_date(
                 calendar_id=e.get("id", "primary"),
             )
             events: list[Events] = res.events
@@ -272,9 +281,7 @@ class MailService:
             if self.creds and self.creds.expired and self.creds.refresh_token:
                 self.creds.refresh(request=Request())
             else:
-                flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(
-                    client_secrets_file="mail_client_secret.json", scopes=self.SCOPES
-                )
+                flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(client_secrets_file="mail_client_secret.json", scopes=self.SCOPES)
                 self.creds = flow.run_local_server(port=0)
             # Save the credentials for the next run
             with Path("mail_token.json").open(mode="w") as token:
@@ -310,9 +317,7 @@ class MailService:
         temp = self.service.users().drafts().create(userId=user_id, body=body.prepared()).execute()
         return MailDraft(**temp)
 
-    def get_draft(
-        self, message_id: str, message_format: MailFormatEnum | None = None, user_id: str = "me"
-    ) -> MailMessage | None:
+    def get_draft(self, message_id: str, message_format: MailFormatEnum | str | None = None, user_id: str = "me") -> MailMessage | None:
         """
         Get an existing Draft from our Mailbox.
 
