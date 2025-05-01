@@ -1,3 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gap"
+dynamic = ["version", "dependencies"]
+authors = [
+    { name = "k8thekat", email = "Cadwalladerkatelynn@gmail.com" },
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+description = "A Python wrapper for the Google API."
+requires-python = ">=3.12.0"
+license = { file = "LICENSE" }
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: AsyncIO",
+    "Topic :: Internet",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+keywords = ["google", "api"]
+[project.urls]
+GitHub = "https://github.com/k8thekat/GoogleAPI-python"
+
+[tool.setuptools.dynamic]
+dependencies = { file = "requirements.txt" }
+version = { attr = "gap.__version__" }
+
+[tool.setuptools]
+packages = ["gap"]
+include-package-data = true
+
 [tool.ruff]
 target-version = "py310"
 line-length = 125
