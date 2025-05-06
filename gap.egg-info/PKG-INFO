@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: gap
-Version: 0.0.1
+Version: 1.0.0
 Summary: A Python wrapper for the Google API.
 Author-email: k8thekat <Cadwalladerkatelynn@gmail.com>
 License:                     GNU GENERAL PUBLIC LICENSE
