@@ -14,9 +14,6 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest
 
 from ._enums import MailFormatEnum
-
-# todo - Be able to generate a list of calendar ID's or make a class method to perform the action first?
-from .calendar_ids import ids as Calendar_IDS
 from .modules import (
     Calendar,
     CalendarList,
@@ -49,8 +46,6 @@ class CalendarService:
     SCOPES: ClassVar[list[str]] = [
         "https://www.googleapis.com/auth/calendar",
     ]
-
-    CALENDARIDS: ClassVar[list[CalendarID]] = Calendar_IDS
 
     def __init__(self, token_path: Path) -> None:
         """
@@ -225,7 +220,7 @@ class CalendarService:
                     break
         return "\n".join(f"Name: {e.summary} | ID: {e.id}" for e in temp)
 
-    def get_all_events(self, calendar: Union[list[CalendarID], None] = None) -> list[Events]:
+    def get_all_events(self, calendar: list[CalendarID]) -> list[Events]:
         """
         Get's all events from the current time into the future for a specific set of Calendars or use `self.CALENDARIDS`.
 
@@ -239,8 +234,6 @@ class CalendarService:
         :class:`list[Events]`
             A list of :class:`Events` with populated fields.
         """
-        if calendar is None:
-            calendar = self.CALENDARIDS
         temp: list[Events] = []
         for e in calendar:
             res: EventsList = self.get_calendar_events_by_date(
