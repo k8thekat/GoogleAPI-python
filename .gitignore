@@ -4,3 +4,6 @@
 *.venv/
 calendar_ids.py
 *build
+*dist
+*local.py
+

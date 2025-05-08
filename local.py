@@ -36,3 +36,8 @@
 #     subject="UPDATED Second test DRAFT CREATION~",
 #     body="UPDATED UNK..",
 # )
+
+from .gap.modules import Events
+
+
+Events()

@@ -4,149 +4,25 @@ import base64
 from email.message import EmailMessage
 from enum import IntEnum, StrEnum
 from pprint import pprint
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union
 
 from googleapiclient.discovery import Resource
+
+from ._enums import CalendarColorEnum, EventTypeEnum
 
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
-    from ._enums import MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
-    from ._types import EventListsTyped, EventsTyped, EventTime, EventUser, MailLabelTyped
+    from ._enums import (
+        LocalTimeZoneEnum,
+        MailLabelColorEnum,
+        MailLabelListVisiblityEnum,
+        MailMessageListVisibilityEnum,
+        MailTypeEnum,
+    )
+    from ._types import EventListsTyped, EventsDraftTyped, EventsTyped, EventTimeTyped, EventUser, MailLabelTyped
 
 
-class LocalTimeZone(StrEnum):
-    EST = "America/New_York"
-    CST = "America/Chicago"
-    MTN = "America/Denver"
-    PST = "America/Los_Angeles"
-
-
-class Events(Resource, dict):
-    """
-    https://developers.google.com/calendar/api/v3/reference/events
-    """
-
-    kind: str
-    etag: str
-    id: str
-    calendar_id: str
-    status: str
-    htmlLink: str
-    created: str  # ISO format
-    updated: str  # ISO format
-    summary: str
-    creator: EventUser | dict  # = field(default_factory=dict[str, Any])
-    organizer: EventUser | dict  # = field(default_factory=dict[str, Any])
-    # start: Required[EventTime]  # = field(default=None)
-    start: EventTime  # = field(default=None)
-    end: EventTime | None  # = field(default=None)
-    recurringEventId: str
-    originalStartTime: EventTime | None  # = field(default=None)
-    transparency: str
-    visiblity: str
-    iCalUID: str
-    sequence: int
-    attendees: list[EventUser]  # = field(default_factory=list)
-    attendeesOmitted: bool
-    extendedProperties: dict[str, dict[str, str]]
-    description: Union[str, None] = None
-    location: Union[str, None] = None
-    reminders: dict[str, Union[str, bool, dict]]
-    colorId: Union[CalendarColor, None] = None
-
-    def __init__(self, calendar_id: str, **kwargs: EventsTyped) -> None:
-        setattr(self, "calendar_id", calendar_id)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, self.__class__) and self.id == other.id
-
-    def __lt__(self, other: object) -> bool:
-        return isinstance(other, self.__class__) and self.id < other.id
-
-    def __repr__(self) -> str:
-        return f"Title: {self.summary}\nStart: {self.start.get('date', self.start.get('dateTime'))}\nDescription: {self.description}\nLocation: {self.location}\nCalendarID: {self.calendar_id}\n"
-
-    def list(self, **kwargs: Any) -> HttpRequest:
-        """
-        Sorts the current Events and returns itself.\n
-        `from googleapiclient.http import HttpRequest`
-        """
-        return super().list(**kwargs)  # type: ignore
-
-    def update(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/update
-        """
-        return super().update(**kwargs)  # type: ignore
-
-    def delete(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/delete
-        """
-        return super().delete(**kwargs)  # type: ignore
-
-    def insert(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/insert
-
-        Parameters
-        -----------
-        calendarId: :class:`str`
-            The Google Calendar ID to Insert the event to.
-        body: :class:`dict`
-            The :class:`Events` passed in as a :class:`dict`. (Simply call `Events.__dict__`)
-
-
-        Returns
-        --------
-        :class:`HttpRequest`
-            _description_.
-        """
-        return super().insert(**kwargs)  # type: ignore
-
-    def get(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/get
-        """
-
-        return super().get(**kwargs)  # type: ignore
-
-
-# class EventsList(TypedDict, total=False):
-class EventsList(Resource, dict):
-    """
-    https://developers.google.com/calendar/api/v3/reference/events/list#python
-    """
-
-    kind: str
-    etag: str
-    summary: str
-    description: str
-    updated: str  # ISO format
-    timeZone: str
-    accessRole: str
-    defaultReminders: list[dict[str, Union[str, int]]]  # = field(default_factory=list)
-    nextPageToken: str
-    nextSyncToken: str
-    now: str  # ISO format
-    events: list[Events]
-    calendar_id: str
-
-    def __init__(self, calendar_id: str, **kwargs: EventListsTyped) -> None:
-        setattr(self, "calendar_id", calendar_id)
-        for key, value in kwargs.items():
-            # items is a list of dictionaries
-            temp = []
-            if key == "items" and len(value) > 0:
-                temp: list[Events] = [Events(calendar_id=calendar_id, **e) for e in value]  # type: ignore
-            setattr(self, "events", temp)
-            setattr(self, key, value)
-
-
-# @dataclass(init=False, repr=False, match_args=False)
 class Calendar(Resource):
     """
     https://developers.google.com/calendar/api/v3/reference/calendars
@@ -202,7 +78,6 @@ class CalendarList(Resource, dict):
         return f"{self.summary} | {self.id} | {self.colorId}"
 
 
-# class CalendarListEntry(TypedDict, total=False):
 class CalendarListEntry(Resource, dict):
     """
     aka The List of Calendars available to the Google Acocunt. (Shared, Owned, etc) tied to `CalendarList.list()`
@@ -229,70 +104,247 @@ class CalendarListEntry(Resource, dict):
         return f"{self.kind} | Events: {self.events}\n"
 
 
-class CalendarColor(IntEnum):
-    blue = 1
-    green = 2
-    purple = 3
-    red = 4
-    yellow = 5
-    orange = 6
-    turquoise = 7
-    gray = 8
-    bold_blue = 9
-    bold_green = 10
-    bold_red = 11
+class Events(Resource):
+    (
+        """
+    Events _summary_
 
+    Parameters
+    -----------
+    Resource: :class:`_type_`
+        _description_.
+    dict: :class:`_type_`
+        _description_.
 
-class MailUser(Resource):
-    def getProfile(self, **kwargs: Any) -> MailUserProfile:
-        return super().getProfile(**kwargs)  # type: ignore
-
-    def users(self, **kwargs: Any) -> MailUser:
-        return super().users(**kwargs)  # type: ignore
-
-    def labels(self, **kwargs: Any) -> MailUserLabel:
-        return super().users().labels(**kwargs)  # type: ignore
-
-    def drafts(self, **kwargs: Any) -> MailDraft:
-        return super().users().drafts(**kwargs)  # type: ignore
-
-
-class MailUserProfile(Resource):
-    emailAddress: str
-    messagesTotal: int
-    threadsTotal: int
-    historyId: str
-
-
-class MailUserLabel(Resource, dict):
+    Returns
+    --------
+    :class:`_type_`
+        _description_.
     """
-    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels
-    """
+        """ """
+    )
 
+    kind: str
+    etag: str
     id: str
-    name: str
-    messageListVisibility: MailMessageListVisibilityEnum
-    labelListVisibility: MailLabelListVisiblityEnum
-    type: MailTypeEnum
-    messagesTotal: int
-    messagesUnread: int
-    threadsTotal: int
-    threadsUnread: int
-    color: MailLabelColorEnum
+    calendar_id: str
+    status: str
+    htmlLink: str
+    created: str  # ISO format
+    updated: str  # ISO format
+    summary: str
+    creator: EventUser | dict  # = field(default_factory=dict[str, Any])
+    organizer: EventUser | dict  # = field(default_factory=dict[str, Any])
+    # start: Required[EventTime]  # = field(default=None)
+    start: EventTimeTyped  # = field(default=None) # TODO - Need to validate this cannot ever be "None".
+    end: EventTimeTyped  # = field(default=None) # TODO - Need to validate this cannot ever be "None".
+    recurringEventId: str
+    originalStartTime: EventTimeTyped | None  # = field(default=None)
+    transparency: str
+    visiblity: str
+    iCalUID: str
+    sequence: int
+    attendees: list[EventUser]  # = field(default_factory=list)
+    attendeesOmitted: bool
+    extendedProperties: dict[str, dict[str, str]]
+    description: Union[str, None] = None
+    location: Union[str, None] = None
+    reminders: dict[str, Union[str, bool, dict]]
+    colorId: Union[CalendarColorEnum, None] = None
 
-    def __init__(self, **kwargs: MailLabelTyped) -> None:
+    def __init__(self, calendar_id: str, **kwargs: EventsTyped) -> None:
+        setattr(self, "calendar_id", calendar_id)
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, self.__class__) and self.id == other.id
+
+    def __lt__(self, other: object) -> bool:
+        return isinstance(other, self.__class__) and self.id < other.id
+
+    def __repr__(self) -> str:
+        return f"Title: {self.summary}\nStart: {self.start.get('date', self.start.get('dateTime'))}\nDescription: {self.description}\nLocation: {self.location}\nCalendarID: {self.calendar_id}\n"
+
     def list(self, **kwargs: Any) -> HttpRequest:
         """
-        List of labels. Note that each label resource only contains an id, name, messageListVisibility, labelListVisibility, and type. The labels.get method can fetch additional label details.
-
+        Sorts the current Events and returns itself.\n
+        `from googleapiclient.http import HttpRequest`
         """
         return super().list(**kwargs)  # type: ignore
 
-    def create(self, **kwargs: Any) -> HttpRequest:
-        return super().create(**kwargs)  # type: ignore
+    def update(self, calendar_id: str | None = None, event_id: str | None = None, **kwargs: Any) -> HttpRequest:
+        """
+        https://developers.google.com/calendar/api/v3/reference/events/update
+        """
+        if calendar_id is None:
+            calendar_id = self.calendar_id
+        if event_id is None:
+            event_id = self.id
+        return super().update(calendarId=calendar_id, eventId=event_id, **kwargs)  # type: ignore
+
+    def delete(self, **kwargs: Any) -> HttpRequest:
+        """
+        https://developers.google.com/calendar/api/v3/reference/events/delete
+        """
+        return super().delete(**kwargs)  # type: ignore
+
+    def insert(self, **kwargs: Any) -> HttpRequest:
+        """
+        https://developers.google.com/calendar/api/v3/reference/events/insert
+
+        Parameters
+        -----------
+        calendarId: :class:`str`
+            The Google Calendar ID to Insert the event to.
+        body: :class:`dict`
+            The :class:`Events` passed in as a :class:`dict`. (Simply call `Events.__dict__`)
+
+
+        Returns
+        --------
+        :class:`HttpRequest`
+            _description_.
+        """
+        return super().insert(**kwargs)  # type: ignore
+
+    def get(self, **kwargs: Any) -> HttpRequest:
+        """
+        https://developers.google.com/calendar/api/v3/reference/events/get
+        """
+
+        return super().get(**kwargs)  # type: ignore
+
+
+class EventsList(Resource, dict):
+    """
+    https://developers.google.com/calendar/api/v3/reference/events/list#python
+    """
+
+    kind: str
+    etag: str
+    summary: str
+    description: str
+    updated: str  # ISO format
+    timeZone: str
+    accessRole: str
+    defaultReminders: list[dict[str, Union[str, int]]]  # = field(default_factory=list)
+    nextPageToken: str
+    nextSyncToken: str
+    now: str  # ISO format
+    events: list[Events]
+    calendar_id: str
+
+    def __init__(self, calendar_id: str, **kwargs: EventListsTyped) -> None:
+        setattr(self, "calendar_id", calendar_id)
+        for key, value in kwargs.items():
+            # items is a list of dictionaries
+            temp = []
+            if key == "items" and len(value) > 0:
+                temp: list[Events] = [Events(calendar_id=calendar_id, **e) for e in value]  # type: ignore
+            setattr(self, "events", temp)
+            setattr(self, key, value)
+
+
+class EventsDraft:
+    """
+    To be used to create a Google Calendar event via `CalendarService.create_event()`.
+
+    Parameters
+    -----------
+    sumary: :class:`str`
+        The Title for the Event.
+    description: class:`str`
+        The Description for the Event.
+    color_id: :class:`CalendarColorEnum`, Optional
+        The color for the calendar Event, defaults to :class:`CalendarColorEnum.bold_red`.
+    event_type: :class:`EventTypeEnum`, Optional
+        The Type of event this is, defaults to :class:`EventTypeEnum.default`.
+    id: :class:`str` | None, Optional
+        By default this is generated by the Google API when the Event is inserted.
+    location: :class:`str` | None, Optional
+        The location the Event is taking place. Google Maps type address.
+    transparency: :class:`str`
+        Whether the event blocks time on the calendar. Optional. Possible values are:
+        - "opaque" - Default value. The event does block time on the calendar. This is equivalent to setting Show me as to Busy in the Calendar UI.
+        - "transparent" - The event does not block time on the calendar. This is equivalent to setting Show me as to Available in the Calendar UI.
+    reminders: :class:`dict`, Optional
+        If the event doesn't use the default reminders, this lists the reminders specific to the event, or, if not set, indicates that no reminders are set for this event. The maximum number of override reminders is 5.
+        - `useDefault`: Whether the default reminders of the calendar apply to the event.
+    end: :class:`EventTime`
+        You MUST have either a `date` or `dateTime`, the `timeZone` key must be included with `dateTime`.
+    start: :class:`EventTime`
+        You MUST have either a `date` or `dateTime` the `timeZone` key must be included with `dateTime`.
+    """
+
+    calendar_id: str
+    summary: str
+    end: EventTimeTyped
+    start: EventTimeTyped
+    color_id: CalendarColorEnum = CalendarColorEnum.bold_red
+    descrption: str
+    event_type: EventTypeEnum = EventTypeEnum.default
+    id: str | None
+    location: str | None
+    transparency = Literal["opaque", "transparent"]
+    reminders: ClassVar[dict] = {"useDefault": True}
+
+    def __init__(self, calendar_id: str, data: EventsDraftTyped) -> None:
+        self.calendar_id = calendar_id
+        for key, value in data.items():
+            if key == "color_id":
+                setattr(self, "colorId", value)
+            elif key == "event_type":
+                setattr(self, "eventType", value)
+            elif (key == "end" or key == "start") and isinstance(value, dict):
+                self.validate_keys(attribute=key, data=value)
+            else:
+                setattr(self, key, value)
+
+    def to_dict(self) -> dict:
+        """
+        Returns the dunder attribute `__dict__`.
+        """
+        return self.__dict__
+
+    def validate_keys(self, attribute: str, data: EventTimeTyped | dict) -> None:
+        """
+        Validate's the keys of the data depending on the "key" parameter.
+
+        - Currently supports :class:`EventTime`.
+
+        Parameters
+        -----------
+        attribute: :class:`str`
+            The attribute we are validating has the proper dict keys.
+        data: :class:`EventTimeTyped | dict`
+            The datastructure to validate.
+
+        Raises
+        -------
+        :exc:`ValueError`
+            You must have the key value of `timeZone` inside your attribute.
+        :exc:`ValueError`
+            You must have the key value `date` or `dateTime` inside your attribute.
+        :exc:`ValueError`
+            You cannot have both `date` and `dateTime` keys inside your attribute.
+        """
+        if attribute == "end" or (attribute == "start" and isinstance(data, dict)):
+            has_date: str | None = data.get("date", None)
+            has_datetime: str | None = data.get("dateTime", None)
+            has_timezone: LocalTimeZoneEnum | str | None = data.get("timeZone", None)
+
+            # If we have a datetime object and no timezone. So we can set the event to a proper timezone.
+            if has_datetime is not None and has_timezone is None:
+                raise ValueError("You must have the key value of `timeZone` inside your %s", attribute)
+
+            # If we have no date or datetime. We need something to pick a day.
+            if has_date is None and has_datetime is None:
+                raise ValueError("You must have the key value `date` or `dateTime` inside your %s", attribute)
+
+            # If we have a date and datetime, which is an error. We can't have both.
+            elif has_date is not None and has_datetime is not None:
+                raise ValueError("You cannot have both `date` and `dateTime` keys inside your %s", attribute)
 
 
 class MailDraft(Resource, dict):
@@ -411,6 +463,29 @@ class MailMessage(EmailMessage, Resource, dict):
         return self.__repr__()
 
 
+class MailMessageBody(dict):
+    attachmentId: str
+    size: int
+    data: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        setattr(self, "data", "")
+        for key, value in kwargs.items():
+            if key == "data":
+                setattr(self, key, base64.urlsafe_b64decode(value).decode())
+            else:
+                setattr(self, key, value)
+
+
+class MailMessageHeader(dict):
+    name: str  # The name of the header before the : separator. For example, To.
+    value: str  # The value of the header after the : separator. For example, someuser@example.com.
+
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
 class MailMessagePart(dict):
     partId: str
     mimeType: str
@@ -429,24 +504,53 @@ class MailMessagePart(dict):
                 setattr(self, key, value)
 
 
-class MailMessageHeader(dict):
-    name: str  # The name of the header before the : separator. For example, To.
-    value: str  # The value of the header after the : separator. For example, someuser@example.com.
+class MailUser(Resource):
+    def getProfile(self, **kwargs: Any) -> MailUserProfile:
+        return super().getProfile(**kwargs)  # type: ignore
 
-    def __init__(self, **kwargs: Any) -> None:
+    def users(self, **kwargs: Any) -> MailUser:
+        return super().users(**kwargs)  # type: ignore
+
+    def labels(self, **kwargs: Any) -> MailUserLabel:
+        return super().users().labels(**kwargs)  # type: ignore
+
+    def drafts(self, **kwargs: Any) -> MailDraft:
+        return super().users().drafts(**kwargs)  # type: ignore
+
+
+class MailUserLabel(Resource, dict):
+    """
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels
+    """
+
+    id: str
+    name: str
+    messageListVisibility: MailMessageListVisibilityEnum
+    labelListVisibility: MailLabelListVisiblityEnum
+    type: MailTypeEnum
+    messagesTotal: int
+    messagesUnread: int
+    threadsTotal: int
+    threadsUnread: int
+    color: MailLabelColorEnum
+
+    def __init__(self, **kwargs: MailLabelTyped) -> None:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def list(self, **kwargs: Any) -> HttpRequest:
+        """
+        List of labels. Note that each label resource only contains an id, name, messageListVisibility, labelListVisibility, and type. The labels.get method can fetch additional label details.
 
-class MailMessageBody(dict):
-    attachmentId: str
-    size: int
-    data: str
+        """
+        return super().list(**kwargs)  # type: ignore
 
-    def __init__(self, **kwargs: Any) -> None:
-        setattr(self, "data", "")
-        for key, value in kwargs.items():
-            if key == "data":
-                setattr(self, key, base64.urlsafe_b64decode(value).decode())
-            else:
-                setattr(self, key, value)
+    def create(self, **kwargs: Any) -> HttpRequest:
+        return super().create(**kwargs)  # type: ignore
+
+
+class MailUserProfile(Resource):
+    emailAddress: str
+    messagesTotal: int
+    threadsTotal: int
+    historyId: str

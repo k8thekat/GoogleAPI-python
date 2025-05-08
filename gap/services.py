@@ -13,14 +13,14 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest
 
-from ._enums import MailFormatEnum
+from ._enums import LocalTimeZoneEnum, MailFormatEnum
 from .modules import (
     Calendar,
     CalendarList,
     CalendarListEntry,
     Events,
+    EventsDraft,
     EventsList,
-    LocalTimeZone,
     MailDraft,
     MailMessage,
     MailUser,
@@ -91,7 +91,7 @@ class CalendarService:
     # todo - Rebuild how or what we use as a class/object to unpack all our data.
     def create_event(
         self,
-        event: Events,
+        event: EventsDraft,
     ) -> Events:
         """
         Create an event for the calendar_id passed in.
@@ -106,7 +106,7 @@ class CalendarService:
         :class:`Events`
             An :class:`Events` class from the response.
         """
-        temp: HttpRequest = self.service.events().insert(calendarId=event.calendar_id, body=event.__dict__)
+        temp: HttpRequest = self.service.events().insert(calendarId=event.calendar_id, body=event.to_dict())
         res = Events(calendar_id=event.calendar_id, **temp.execute())
 
         return res
@@ -135,7 +135,9 @@ class CalendarService:
             print(f"Error Deleting the event..{res}")
             return None
 
-    def get_event(self, event_id: str, calendar_id: str = "primary", timezone: Union[LocalTimeZone, None] = None) -> Events:
+    def get_event(
+        self, event_id: str, calendar_id: str = "primary", timezone: Union[LocalTimeZoneEnum, None] = None
+    ) -> Events:
         """
         Retrieve a specific Event
 
@@ -145,7 +147,7 @@ class CalendarService:
             The ID of the Event. See :class:`Events.id` value.
         calendar_id: :class:`str`, optional
             The Calendar ID to be used, by default "primary".
-        timezone: :class:`Union[LocalTimeZone, None]`, optional
+        timezone: :class:`Union[LocalTimeZoneEnum, None]`, optional
             Time zone used in the response. Optional. The default is the time zone of the calendar.
 
         Returns

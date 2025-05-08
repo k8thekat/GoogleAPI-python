@@ -6,6 +6,9 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ._enums import (
+        CalendarColorEnum,
+        EventTypeEnum,
+        LocalTimeZoneEnum,
         MailFormatEnum,
         MailLabelColorEnum,
         MailLabelListVisiblityEnum,
@@ -14,10 +17,20 @@ if TYPE_CHECKING:
     )
 
 
-class EventTime(TypedDict, total=False):
+class EventTimeTyped(TypedDict, total=False):
+    """
+    Notes
+    ------
+    dateTime:
+        ISO8601 format.
+    date:
+        UNK
+    timezone:
+    """
+
     date: str
     dateTime: str
-    timeZone: str
+    timeZone: LocalTimeZoneEnum
 
 
 class EventUser(TypedDict, total=False):
@@ -32,13 +45,26 @@ class EventUser(TypedDict, total=False):
     additionalGuests: int
 
 
+class EventsDraftTyped(TypedDict, total=False):
+    summary: str
+    end: EventTimeTyped
+    start: EventTimeTyped
+    colorId: CalendarColorEnum
+    descrption: str
+    eventType: EventTypeEnum
+    id: str | None
+    location: str | None
+    transparency: str
+    reminders: dict
+
+
 class CalendarID(TypedDict):
     name: str
     id: str
 
 
 class EventsTyped(TypedDict, total=False):
-    kind: str
+    kind: str | None
     etag: str
     id: str
     status: str
@@ -51,12 +77,12 @@ class EventsTyped(TypedDict, total=False):
     colorId: str
     creator: EventUser
     organizer: EventUser
-    start: EventTime
-    end: EventTime
+    start: EventTimeTyped
+    end: EventTimeTyped
     endTimeUnspecified: bool
     recurrence: list[str]
     recurringEventId: str
-    originalStartTime: EventTime
+    originalStartTime: EventTimeTyped
     transparency: str
     visibility: str
 

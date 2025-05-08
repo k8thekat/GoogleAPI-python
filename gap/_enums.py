@@ -1,4 +1,34 @@
-from enum import StrEnum
+from enum import IntEnum, StrEnum
+
+
+class CalendarColorEnum(IntEnum):
+    blue = 1
+    green = 2
+    purple = 3
+    red = 4
+    yellow = 5
+    orange = 6
+    turquoise = 7
+    gray = 8
+    bold_blue = 9
+    bold_green = 10
+    bold_red = 11
+
+
+class EventTypeEnum(StrEnum):
+    default = "default"
+    birthday = "birthday"
+    focus = "focusTime"
+    from_gmail = "fromGmail"
+    out_of_office = "outOfOffice"
+    working_location = "workingLocation"
+
+
+class LocalTimeZoneEnum(StrEnum):
+    EST = "America/New_York"
+    CST = "America/Chicago"
+    MTN = "America/Denver"
+    PST = "America/Los_Angeles"
 
 
 class MailFormatEnum(StrEnum):
