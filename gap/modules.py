@@ -294,10 +294,14 @@ class EventsDraft:
         for key, value in data.items():
             if key == "color_id":
                 setattr(self, "colorId", value)
+
             elif key == "event_type":
                 setattr(self, "eventType", value)
+
             elif (key == "end" or key == "start") and isinstance(value, dict):
                 self.validate_keys(attribute=key, data=value)
+                setattr(self, key, value)
+
             else:
                 setattr(self, key, value)
 
@@ -305,6 +309,7 @@ class EventsDraft:
         """
         Returns the dunder attribute `__dict__`.
         """
+
         return self.__dict__
 
     def validate_keys(self, attribute: str, data: EventTimeTyped | dict) -> None:

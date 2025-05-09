@@ -37,7 +37,32 @@
 #     body="UPDATED UNK..",
 # )
 
-from .gap.modules import Events
+import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from gap._enums import CalendarColorEnum, LocalTimeZoneEnum
+from gap._types import EventsDraftTyped
+from gap.services import CalendarService, EventsDraft
+
+dweeb_family_id = "8d0382910b83b346b08292060faf48d67c45a286a97f69e5b16469a8e88b27c4@group.calendar.google.com"
+
+data: EventsDraftTyped = {
+    "summary": "Kat - Google API Test Event",
+    "location": "Seattle, Washington",
+    "description": "The answer to everything is 42....",
+    "start": {"dateTime": (datetime.now() + timedelta(hours=4)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
+    "end": {"dateTime": (datetime.now() + timedelta(hours=5)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
+    "reminders": {"useDefault": True},
+    "colorId": CalendarColorEnum.bold_red,
+}
+test_event = EventsDraft(calendar_id=dweeb_family_id, data=data)
 
 
-Events()
+def test_func() -> None:
+    calendar = CalendarService(token_path=Path(__file__).parent)
+    print(calendar.create_event(event=test_event))
+
+
+test_func()
+# asyncio.run(test_func())
