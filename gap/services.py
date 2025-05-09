@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from google.auth.external_account_authorized_user import Credentials
     from googleapiclient.http import HttpRequest
 
-    from ._types import CalendarID, LabelID
+    from ._types import CalendarID, EventsDraftTyped, LabelID
 
 
 class CalendarService:
@@ -166,9 +166,7 @@ class CalendarService:
             temp: HttpRequest = self.service.events().get(calendarId=calendar_id, eventId=event_id)
         else:
             temp: HttpRequest = self.service.events().get(calendarId=calendar_id, eventId=event_id, timeZone=timezone)
-        res = Events(**temp.execute())
-        res.calendar_id = calendar_id
-        return res
+        return Events(calendar_id=calendar_id, **temp.execute())
 
     def get_calendar_events_by_date(
         self,
@@ -256,7 +254,7 @@ class CalendarService:
             temp.extend(events)
         return temp
 
-    def update_event(self, event: Events) -> Events:
+    def update_event(self, old_event: Events, event_draft: EventsDraft | EventsDraftTyped) -> Events:
         """
         Update an Event.
 
@@ -269,7 +267,15 @@ class CalendarService:
         :class:`Events`
             An :class:`Events` class from the response.
         """
-        temp: HttpRequest = self.service.events().update(calendarId=event.calendar_id, eventId=event.id, body=event.__dict__)
+        event: Events = self.get_event(event_id=old_event.id, calendar_id=old_event.calendar_id)
+        if isinstance(event_draft, EventsDraft):
+            event_draft = event_draft.to_dict()
+        for key, value in event_draft.items():
+            setattr(event, key, value)
+
+        temp: HttpRequest = self.service.events().update(
+            calendarId=event.calendar_id, eventId=event.id, body=event.to_dict()
+        )
         return Events(calendar_id=event.calendar_id, **temp.execute())
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Required, TypedDict
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -47,8 +47,8 @@ class EventUser(TypedDict, total=False):
 
 class EventsDraftTyped(TypedDict, total=False):
     summary: str
-    end: EventTimeTyped
-    start: EventTimeTyped
+    end: Required[EventTimeTyped]
+    start: Required[EventTimeTyped]
     colorId: CalendarColorEnum
     description: str
     eventType: EventTypeEnum

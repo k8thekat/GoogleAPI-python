@@ -105,8 +105,7 @@ class CalendarListEntry(Resource, dict):
 
 
 class Events(Resource):
-    (
-        """
+    """
     Events _summary_
 
     Parameters
@@ -121,8 +120,6 @@ class Events(Resource):
     :class:`_type_`
         _description_.
     """
-        """ """
-    )
 
     kind: str
     etag: str
@@ -153,7 +150,9 @@ class Events(Resource):
     colorId: Union[CalendarColorEnum, None] = None
 
     def __init__(self, calendar_id: str, **kwargs: EventsTyped) -> None:
+        setattr(self, "_raw", kwargs)
         setattr(self, "calendar_id", calendar_id)
+
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -164,7 +163,21 @@ class Events(Resource):
         return isinstance(other, self.__class__) and self.id < other.id
 
     def __repr__(self) -> str:
-        return f"Title: {self.summary}\nStart: {self.start.get('date', self.start.get('dateTime'))}\nDescription: {self.description}\nLocation: {self.location}\nCalendarID: {self.calendar_id}\n"
+        temp = []
+        temp.append(f"Title: {self.summary} | ID: {self.id}")
+        temp.append(f"Start: {self.start.get('date', self.start.get('dateTime'))}")
+        temp.append(f"End: {self.end.get('date', self.end.get('dateTime'))}")
+        temp.append(f"Description: {self.description}")
+        temp.append(f"Location: {self.location}")
+        temp.append(f"CalendarID: {self.calendar_id}")
+        return "\n".join(temp)
+
+    def to_dict(self) -> dict:
+        """
+        Returns the dunder attribute `__dict__`.
+        """
+
+        return self.__dict__
 
     def list(self, **kwargs: Any) -> HttpRequest:
         """
@@ -181,7 +194,7 @@ class Events(Resource):
             calendar_id = self.calendar_id
         if event_id is None:
             event_id = self.id
-        return super().update(calendarId=calendar_id, eventId=event_id, **kwargs)  # type: ignore
+        return super().update(calendarId=calendar_id, eventId=event_id, body=kwargs)  # type: ignore
 
     def delete(self, **kwargs: Any) -> HttpRequest:
         """
@@ -219,6 +232,19 @@ class Events(Resource):
 class EventsList(Resource, dict):
     """
     https://developers.google.com/calendar/api/v3/reference/events/list#python
+
+    Parameters
+    -----------
+    calendar_id: str
+        The ID of the calendar with these events.
+
+    **kwargs: EventListsTyped
+        The JSON response.
+
+    Attributes
+    -----------
+    events: list[Events]
+        A list of Calendar Events.
     """
 
     kind: str
@@ -237,6 +263,7 @@ class EventsList(Resource, dict):
 
     def __init__(self, calendar_id: str, **kwargs: EventListsTyped) -> None:
         setattr(self, "calendar_id", calendar_id)
+        setattr(self, "_raw", kwargs)
         for key, value in kwargs.items():
             # items is a list of dictionaries
             temp = []
@@ -244,6 +271,12 @@ class EventsList(Resource, dict):
                 temp: list[Events] = [Events(calendar_id=calendar_id, **e) for e in value]  # type: ignore
             setattr(self, "events", temp)
             setattr(self, key, value)
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __repr__(self) -> str:
+        return "\n\n".join(event.__repr__() for event in self.events).strip(",")
 
 
 class EventsDraft:
@@ -305,12 +338,12 @@ class EventsDraft:
             else:
                 setattr(self, key, value)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> EventsDraftTyped:
         """
         Returns the dunder attribute `__dict__`.
         """
 
-        return self.__dict__
+        return self.__dict__  # type: ignore
 
     def validate_keys(self, attribute: str, data: EventTimeTyped | dict) -> None:
         """
