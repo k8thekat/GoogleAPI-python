@@ -40,7 +40,7 @@ class EventUser(TypedDict, total=False):
     self: bool
     resource: bool
     optional: bool
-    reponseStatus: str
+    responseStatus: str
     comment: str
     additionalGuests: int
 
@@ -50,7 +50,7 @@ class EventsDraftTyped(TypedDict, total=False):
     end: EventTimeTyped
     start: EventTimeTyped
     colorId: CalendarColorEnum
-    descrption: str
+    description: str
     eventType: EventTypeEnum
     id: str | None
     location: str | None

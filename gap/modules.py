@@ -282,7 +282,7 @@ class EventsDraft:
     end: EventTimeTyped
     start: EventTimeTyped
     color_id: CalendarColorEnum = CalendarColorEnum.bold_red
-    descrption: str
+    description: str
     event_type: EventTypeEnum = EventTypeEnum.default
     id: str | None
     location: str | None

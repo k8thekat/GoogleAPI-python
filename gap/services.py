@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Union
@@ -37,8 +38,14 @@ if TYPE_CHECKING:
 class CalendarService:
     """
     Store the calendar_token.json and calendar_secret.json file in the same directory as the `services.py` file and point `token_path` to their directory.
+
+    Parameters
+    -----------
+    token_path: :class:`Path`
+        Must point to the directory which contains your "calendar_secret.json" from Google API.
     """
 
+    _logger = logging.getLogger()
     service: Calendar
     service_name: ClassVar[str] = "calendar"
     service_version: ClassVar[str] = "v3"
@@ -48,11 +55,6 @@ class CalendarService:
     ]
 
     def __init__(self, token_path: Path) -> None:
-        """
-        Parameters:
-        token_path: :class:`Path`
-            Must point to the directory which contains your "calendar_secret.json" from Google API.
-        """
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
         # time.
@@ -76,7 +78,7 @@ class CalendarService:
 
         self.service = build(serviceName="calendar", version="v3", credentials=self.creds)
 
-    # todo - Fully implement support for ini parsing instead of using json files.
+    # TODO - Fully implement support for ini parsing instead of using json files.
     def setup(self, path: Path) -> Any:
         parser = configparser.ConfigParser()
         if isinstance(path, Path) and path.exists():
@@ -88,7 +90,6 @@ class CalendarService:
         else:
             raise ValueError("Failed to find `FreshDesk` section in token.ini file.")
 
-    # todo - Rebuild how or what we use as a class/object to unpack all our data.
     def create_event(
         self,
         event: EventsDraft,
@@ -123,17 +124,23 @@ class CalendarService:
         Returns
         --------
         None
+
+        Raises
+        -------
+        exc HttpError:
+            If the HttpRequest fails for any reason to execute.
+        exc ValueError:
+            If the HttpRequest response is not an empty str.
         """
         temp: HttpRequest = self.service.events().delete(calendarId=event.calendar_id, eventId=event.id)
         try:
             res: HttpRequest | str = temp.execute()
-        except HttpError:
+        except HttpError as e:
+            self._logger.warning("We encountered an error %s .", e)
             return None
         if isinstance(res, str) and len(res) == 0:
             return None
-        else:
-            print(f"Error Deleting the event..{res}")
-            return None
+        raise ValueError("Unexpected response value when calling CalendarService.delete_event. | Value: %s", res)
 
     def get_event(
         self, event_id: str, calendar_id: str = "primary", timezone: Union[LocalTimeZoneEnum, None] = None
@@ -189,7 +196,7 @@ class CalendarService:
             "startTime": Order by the start date/time (ascending). This is only available when querying single events (i.e. the parameter singleEvents is True)
             "updated": Order by last modification time (ascending).
         """
-        # TODO - See about storing calendar_id to each event.
+
         since_time = since_time.replace(tzinfo=None)
         return EventsList(
             calendar_id=calendar_id,
@@ -214,7 +221,7 @@ class CalendarService:
             calendar_list = CalendarListEntry(**self.service.calendarList().list(pageToken=page_token).execute())
             temp: list[CalendarList] = []
             if len(calendar_list.events) == 0:
-                print("Unable to find any 'Events' in our CalendarList")
+                self._logger.info("Unable to find any 'Events' in our CalendarList")
             else:
                 temp.extend(calendar_list.events)
                 page_token: str | None = calendar_list.nextPageToken
@@ -244,7 +251,7 @@ class CalendarService:
             events: list[Events] = res.events
 
             if len(events) == 0:
-                print("No upcoming events found.")
+                self._logger.info("No upcoming Calendar Events found.")
                 continue
             temp.extend(events)
         return temp
