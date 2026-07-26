@@ -1,0 +1,3 @@
+include gap/py.typed
+include requirements.txt
+recursive-include gap/numpy_templates *.mustache

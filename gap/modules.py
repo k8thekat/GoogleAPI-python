@@ -1,61 +1,237 @@
+"""Copyright (C) 2021-2026 Katelynn Cadwallader.
+
+This file is part of GoogleAPI-Python.
+
+GoogleAPI-Python is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 3, or (at your option)
+any later version.
+
+GoogleAPI-Python is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+License for more details.
+
+You should have received a copy of the GNU General Public License
+along with GoogleAPI-Python; see the file COPYING.  If not, write to the Free
+Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
+02110-1301, USA.
+
+"""
+
+# ---------------------------------------------------------------------------
+# There are two kinds of class in this module and they must not be conflated:
+#
+# 1. `*Resource` shims — subclass `googleapiclient.discovery.Resource` purely so
+#    the dynamically-built client typechecks. They are NEVER instantiated by us;
+#    `build()` hands back real Resource objects at runtime. Their methods are
+#    all `return super().<name>(**kwargs)  # type: ignore`.
+#
+# 2. Data models — plain classes built from a JSON response. They stash the
+#    untouched payload on `_raw` and splat the rest onto attributes.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import base64
 from email.message import EmailMessage
-from enum import IntEnum, StrEnum
-from pprint import pprint
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 from googleapiclient.discovery import Resource
 
-from ._enums import CalendarColorEnum, EventTypeEnum
+from ._enums import CalendarColorEnum, EventTransparencyEnum, EventTypeEnum
 
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
-    from ._enums import (
-        LocalTimeZoneEnum,
-        MailLabelColorEnum,
-        MailLabelListVisiblityEnum,
-        MailMessageListVisibilityEnum,
-        MailTypeEnum,
-    )
-    from ._types import EventListsTyped, EventsDraftTyped, EventsTyped, EventTimeTyped, EventUser, MailLabelTyped
+    from ._enums import LocalTimeZoneEnum, MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
+    from ._types import EventsDraftTyped, EventTimeTyped, EventUserTyped, RemindersTyped
+
+__all__ = (
+    "CalendarList",
+    "CalendarListEntry",
+    "CalendarListResource",
+    "CalendarResource",
+    "Events",
+    "EventsDraft",
+    "EventsList",
+    "EventsResource",
+    "KeepNote",
+    "KeepNoteDraft",
+    "KeepNoteList",
+    "KeepNotesResource",
+    "MailDraft",
+    "MailDraftList",
+    "MailDraftsResource",
+    "MailLabelsResource",
+    "MailMessage",
+    "MailMessageBody",
+    "MailMessageHeader",
+    "MailMessagePart",
+    "MailUserLabel",
+    "MailUserProfile",
+    "MailUserResource",
+)
 
 
-class Calendar(Resource):
+# ---------------------------------------------------------------------------
+# Resource shims — typing only.
+# ---------------------------------------------------------------------------
+class EventsResource(Resource):
+    """Typing shim for the `events()` collection of the Calendar API.
+
+    https://developers.google.com/calendar/api/v3/reference/events
     """
-    https://developers.google.com/calendar/api/v3/reference/calendars
-    """
 
-    kind: str
-    etag: str
-    id: str
-    summary: str
-    description: str
-    location: str
-    timeZone: str  # ISO format
-    conferenceProperties: dict[str, list[str]]
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
 
-    def events(self) -> Events:
-        """Returns a list of Google Calendar Events"""
-        return super().events()  # type: ignore
+    def insert(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().insert(**kwargs)  # type: ignore[misc]
 
-    def calendarList(self) -> CalendarList:
-        return super().calendarList()  # type: ignore
+    def get(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().get(**kwargs)  # type: ignore[misc]
+
+    def update(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().update(**kwargs)  # type: ignore[misc]
+
+    def delete(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().delete(**kwargs)  # type: ignore[misc]
 
 
-class CalendarList(Resource, dict):
-    # class CalendarList(TypedDict, total=False):
-    """
-    The collection of calendars in the user's calendar list.\n
+class CalendarListResource(Resource):
+    """Typing shim for the `calendarList()` collection of the Calendar API.
+
     https://developers.google.com/calendar/api/v3/reference/calendarList
     """
 
-    # id: Required[str]
-    # summary: Required[str]
-    id: str  # unique Calendar ID for interaction.
-    summary: str  # aka calendar Title or Name
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
+
+
+class CalendarResource(Resource):
+    """Typing shim for the root Calendar v3 service returned by `build()`.
+
+    https://developers.google.com/calendar/api/v3/reference/calendars
+    """
+
+    def events(self) -> EventsResource:
+        """The Events collection."""
+        return super().events()  # type: ignore[misc]
+
+    def calendarList(self) -> CalendarListResource:
+        """The CalendarList collection."""
+        return super().calendarList()  # type: ignore[misc]
+
+
+class MailDraftsResource(Resource):
+    """Typing shim for `users().drafts()` of the Gmail API.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts
+    """
+
+    def create(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().create(**kwargs)  # type: ignore[misc]
+
+    def delete(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().delete(**kwargs)  # type: ignore[misc]
+
+    def get(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().get(**kwargs)  # type: ignore[misc]
+
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
+
+    def send(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().send(**kwargs)  # type: ignore[misc]
+
+    def update(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().update(**kwargs)  # type: ignore[misc]
+
+
+class MailLabelsResource(Resource):
+    """Typing shim for `users().labels()` of the Gmail API.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels
+    """
+
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
+
+    def create(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().create(**kwargs)  # type: ignore[misc]
+
+    def get(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().get(**kwargs)  # type: ignore[misc]
+
+
+class MailUsersResource(Resource):
+    """Typing shim for the `users()` collection of the Gmail API."""
+
+    def getProfile(self, **kwargs: Any) -> HttpRequest:
+        return super().getProfile(**kwargs)  # type: ignore[misc]
+
+    def labels(self, **kwargs: Any) -> MailLabelsResource:
+        """The Labels collection for this user."""
+        return super().labels(**kwargs)  # type: ignore[misc]
+
+    def drafts(self, **kwargs: Any) -> MailDraftsResource:
+        """The Drafts collection for this user."""
+        return super().drafts(**kwargs)  # type: ignore[misc]
+
+
+class MailUserResource(Resource):
+    """Typing shim for the root Gmail v1 service returned by `build()`."""
+
+    def users(self, **kwargs: Any) -> MailUsersResource:
+        """The Users collection."""
+        return super().users(**kwargs)  # type: ignore[misc]
+
+
+class KeepNotesResource(Resource):
+    """Typing shim for the `notes()` collection of the Keep API.
+
+    https://developers.google.com/workspace/keep/api/reference/rest/v1/notes
+    """
+
+    def create(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().create(**kwargs)  # type: ignore[misc]
+
+    def get(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().get(**kwargs)  # type: ignore[misc]
+
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
+
+    def delete(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().delete(**kwargs)  # type: ignore[misc]
+
+
+class KeepResource(Resource):
+    """Typing shim for the root Keep v1 service returned by `build()`."""
+
+    def notes(self) -> KeepNotesResource:
+        """The Notes collection."""
+        return super().notes()  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Calendar data models.
+# ---------------------------------------------------------------------------
+class CalendarList:
+    """A single Calendar entry on the user's calendar list.
+
+    https://developers.google.com/calendar/api/v3/reference/calendarList
+
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response for one calendarList entry.
+
+    """
+
+    id: str  # The unique Calendar ID, this is what every other call wants.
+    summary: str  # aka the calendar Title or Name.
     summaryOverride: str
     colorId: str
     hidden: bool
@@ -66,60 +242,72 @@ class CalendarList(Resource, dict):
     notificationSettings: dict[str, list[dict[str, str]]]
 
     def __init__(self, **kwargs: Any) -> None:
-        # print("Building a CALENDAR LIST OBJECT...")
-        # pprint(kwargs)
+        self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def list(self, **kwargs: Any) -> HttpRequest:
-        return super().list(**kwargs)  # type: ignore
-
     def __repr__(self) -> str:
-        return f"{self.summary} | {self.id} | {self.colorId}"
+        return f"{getattr(self, 'summary', '<no summary>')} | {getattr(self, 'id', '<no id>')} | {getattr(self, 'colorId', '')}"
 
 
-class CalendarListEntry(Resource, dict):
-    """
-    aka The List of Calendars available to the Google Acocunt. (Shared, Owned, etc) tied to `CalendarList.list()`
+class CalendarListEntry:
+    """The list of Calendars available to the Google Account (shared, owned, etc).
+
+    Tied to the response of `calendarList().list()`.
     https://developers.google.com/calendar/api/v3/reference/calendarList/list
+
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response of a `calendarList().list()` call.
+
+    Attributes
+    -----------
+    events: list[:class:`CalendarList`]
+        The calendars from the response `items` array.
+
     """
 
     kind: str
     etag: str
-    nextPageToken: Union[str, None] = None
-    nextSyncToken: Union[str, None] = None
-    # items: Required[list[CalendarList]]
-    # items: list[CalendarList]
+    nextPageToken: Union[str, None]
+    nextSyncToken: Union[str, None]
     events: list[CalendarList]
 
     def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        # Defaults first so a response missing these keys still leaves us usable.
+        self.nextPageToken = None
+        self.nextSyncToken = None
+        self.events = []
         for key, value in kwargs.items():
-            # items is a list of dictionaries
+            # `items` is the array of calendars; everything else is scalar metadata.
             if key == "items":
-                # temp =
-                setattr(self, "events", [CalendarList(**e) for e in value])
-            setattr(self, key, value)
+                self.events = [CalendarList(**entry) for entry in value]
+            else:
+                setattr(self, key, value)
 
     def __repr__(self) -> str:
-        return f"{self.kind} | Events: {self.events}\n"
+        return f"{getattr(self, 'kind', '<no kind>')} | Calendars: {len(self.events)}"
 
 
-class Events(Resource):
-    """
-    Events _summary_
+class Events:
+    """A single Calendar Event, built from an API response.
+
+    https://developers.google.com/calendar/api/v3/reference/events
 
     Parameters
     -----------
-    Resource: :class:`_type_`
-        _description_.
-    dict: :class:`_type_`
-        _description_.
+    calendar_id: :class:`str`
+        The ID of the Calendar this Event belongs to. Tracked locally because the
+        API does not echo it back on the Event body.
+    **kwargs: :class:`Any`
+        The JSON response for one Event.
 
-    Returns
-    --------
-    :class:`_type_`
-        _description_.
     """
+
+    # Attributes we track for our own use that must NOT be sent back to the API.
+    _LOCAL_ATTRS: ClassVar[set[str]] = {"_raw", "calendar_id"}
 
     kind: str
     etag: str
@@ -130,121 +318,89 @@ class Events(Resource):
     created: str  # ISO format
     updated: str  # ISO format
     summary: str
-    creator: EventUser | dict  # = field(default_factory=dict[str, Any])
-    organizer: EventUser | dict  # = field(default_factory=dict[str, Any])
-    # start: Required[EventTime]  # = field(default=None)
-    start: EventTimeTyped  # = field(default=None) # TODO - Need to validate this cannot ever be "None".
-    end: EventTimeTyped  # = field(default=None) # TODO - Need to validate this cannot ever be "None".
+    creator: Union[EventUserTyped, dict[str, Any]]
+    organizer: Union[EventUserTyped, dict[str, Any]]
+    start: EventTimeTyped
+    end: EventTimeTyped
     recurringEventId: str
-    originalStartTime: EventTimeTyped | None  # = field(default=None)
+    originalStartTime: Union[EventTimeTyped, None]
     transparency: str
-    visiblity: str
+    visibility: str
     iCalUID: str
     sequence: int
-    attendees: list[EventUser]  # = field(default_factory=list)
+    attendees: list[EventUserTyped]
     attendeesOmitted: bool
     extendedProperties: dict[str, dict[str, str]]
-    description: Union[str, None] = None
-    location: Union[str, None] = None
-    reminders: dict[str, Union[str, bool, dict]]
-    colorId: Union[CalendarColorEnum, None] = None
+    description: Union[str, None]
+    location: Union[str, None]
+    reminders: RemindersTyped
+    colorId: Union[CalendarColorEnum, None]
 
-    def __init__(self, calendar_id: str, **kwargs: EventsTyped) -> None:
-        setattr(self, "_raw", kwargs)
-        setattr(self, "calendar_id", calendar_id)
-
+    def __init__(self, calendar_id: str, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.calendar_id = calendar_id
+        # Optional fields the __repr__ reads; default them so a sparse response
+        # does not blow up on attribute access.
+        self.description = None
+        self.location = None
+        self.colorId = None
+        self.start = {}
+        self.end = {}
         for key, value in kwargs.items():
             setattr(self, key, value)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and self.id == other.id
 
+    def __hash__(self) -> int:
+        return hash(self.id)
+
     def __lt__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and self.id < other.id
 
     def __repr__(self) -> str:
-        temp = []
-        temp.append(f"Title: {self.summary} | ID: {self.id}")
-        temp.append(f"Start: {self.start.get('date', self.start.get('dateTime'))}")
-        temp.append(f"End: {self.end.get('date', self.end.get('dateTime'))}")
-        temp.append(f"Description: {self.description}")
-        temp.append(f"Location: {self.location}")
-        temp.append(f"CalendarID: {self.calendar_id}")
+        temp: list[str] = [
+            f"Title: {getattr(self, 'summary', '<no title>')} | ID: {getattr(self, 'id', '<no id>')}",
+            f"Start: {self.start.get('date', self.start.get('dateTime'))}",
+            f"End: {self.end.get('date', self.end.get('dateTime'))}",
+            f"Description: {self.description}",
+            f"Location: {self.location}",
+            f"CalendarID: {self.calendar_id}",
+        ]
         return "\n".join(temp)
 
-    def to_dict(self) -> dict:
-        """
-        Returns the dunder attribute `__dict__`.
-        """
+    def to_dict(self) -> dict[str, Any]:
+        """Build the API request body for this Event.
 
-        return self.__dict__
-
-    def list(self, **kwargs: Any) -> HttpRequest:
-        """
-        Sorts the current Events and returns itself.\n
-        `from googleapiclient.http import HttpRequest`
-        """
-        return super().list(**kwargs)  # type: ignore
-
-    def update(self, calendar_id: str | None = None, event_id: str | None = None, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/update
-        """
-        if calendar_id is None:
-            calendar_id = self.calendar_id
-        if event_id is None:
-            event_id = self.id
-        return super().update(calendarId=calendar_id, eventId=event_id, body=kwargs)  # type: ignore
-
-    def delete(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/delete
-        """
-        return super().delete(**kwargs)  # type: ignore
-
-    def insert(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/insert
-
-        Parameters
-        -----------
-        calendarId: :class:`str`
-            The Google Calendar ID to Insert the event to.
-        body: :class:`dict`
-            The :class:`Events` passed in as a :class:`dict`. (Simply call `Events.__dict__`)
-
+        Strips our locally tracked attributes (`_raw`, `calendar_id`) — the API
+        rejects or ignores unknown fields and we should not be sending them.
 
         Returns
         --------
-        :class:`HttpRequest`
-            _description_.
+        dict[:class:`str`, :class:`Any`]
+            The Event body suitable for `events().insert()` / `events().update()`.
+
         """
-        return super().insert(**kwargs)  # type: ignore
-
-    def get(self, **kwargs: Any) -> HttpRequest:
-        """
-        https://developers.google.com/calendar/api/v3/reference/events/get
-        """
-
-        return super().get(**kwargs)  # type: ignore
+        return {key: value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
 
 
-class EventsList(Resource, dict):
-    """
-    https://developers.google.com/calendar/api/v3/reference/events/list#python
+class EventsList:
+    """The response of an `events().list()` call.
+
+    https://developers.google.com/calendar/api/v3/reference/events/list
 
     Parameters
     -----------
-    calendar_id: str
-        The ID of the calendar with these events.
-
-    **kwargs: EventListsTyped
-        The JSON response.
+    calendar_id: :class:`str`
+        The ID of the Calendar these Events belong to.
+    **kwargs: :class:`Any`
+        The JSON response of the list call.
 
     Attributes
     -----------
-    events: list[Events]
-        A list of Calendar Events.
+    events: list[:class:`Events`]
+        The Events from the response `items` array.
+
     """
 
     kind: str
@@ -254,183 +410,247 @@ class EventsList(Resource, dict):
     updated: str  # ISO format
     timeZone: str
     accessRole: str
-    defaultReminders: list[dict[str, Union[str, int]]]  # = field(default_factory=list)
+    defaultReminders: list[dict[str, Union[str, int]]]
     nextPageToken: str
     nextSyncToken: str
-    now: str  # ISO format
     events: list[Events]
     calendar_id: str
 
-    def __init__(self, calendar_id: str, **kwargs: EventListsTyped) -> None:
-        setattr(self, "calendar_id", calendar_id)
-        setattr(self, "_raw", kwargs)
+    def __init__(self, calendar_id: str, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.calendar_id = calendar_id
+        # Build the Events once, up front. Doing this inside the key loop meant a
+        # response where `items` was not the last key wiped the list back out.
+        self.events = [Events(calendar_id=calendar_id, **entry) for entry in kwargs.get("items", [])]
         for key, value in kwargs.items():
-            # items is a list of dictionaries
-            temp = []
-            if key == "items" and len(value) > 0:
-                temp: list[Events] = [Events(calendar_id=calendar_id, **e) for e in value]  # type: ignore
-            setattr(self, "events", temp)
-            setattr(self, key, value)
+            if key != "items":
+                setattr(self, key, value)
+
+    def __len__(self) -> int:
+        return len(self.events)
+
+    def __iter__(self) -> Any:
+        return iter(self.events)
 
     def __str__(self) -> str:
         return self.__repr__()
 
     def __repr__(self) -> str:
-        return "\n\n".join(event.__repr__() for event in self.events).strip(",")
+        return "\n\n".join(repr(event) for event in self.events)
 
 
 class EventsDraft:
-    """
-    To be used to create a Google Calendar event via `CalendarService.create_event()`.
+    """An Event to be created via :meth:`gap.services.CalendarService.create_event`.
 
     Parameters
     -----------
-    sumary: :class:`str`
+    calendar_id: :class:`str`
+        The ID of the Calendar to create the Event on.
+    data: :class:`EventsDraftTyped`
+        The Event fields. `start` and `end` are required and are validated on build.
+
+    Notes
+    ------
+    summary:
         The Title for the Event.
-    description: class:`str`
+    description:
         The Description for the Event.
-    color_id: :class:`CalendarColorEnum`, Optional
-        The color for the calendar Event, defaults to :class:`CalendarColorEnum.bold_red`.
-    event_type: :class:`EventTypeEnum`, Optional
-        The Type of event this is, defaults to :class:`EventTypeEnum.default`.
-    id: :class:`str` | None, Optional
-        By default this is generated by the Google API when the Event is inserted.
-    location: :class:`str` | None, Optional
-        The location the Event is taking place. Google Maps type address.
-    transparency: :class:`str`
-        Whether the event blocks time on the calendar. Optional. Possible values are:
-        - "opaque" - Default value. The event does block time on the calendar. This is equivalent to setting Show me as to Busy in the Calendar UI.
-        - "transparent" - The event does not block time on the calendar. This is equivalent to setting Show me as to Available in the Calendar UI.
-    reminders: :class:`dict`, Optional
-        If the event doesn't use the default reminders, this lists the reminders specific to the event, or, if not set, indicates that no reminders are set for this event. The maximum number of override reminders is 5.
-        - `useDefault`: Whether the default reminders of the calendar apply to the event.
-    end: :class:`EventTime`
-        You MUST have either a `date` or `dateTime`, the `timeZone` key must be included with `dateTime`.
-    start: :class:`EventTime`
-        You MUST have either a `date` or `dateTime` the `timeZone` key must be included with `dateTime`.
+    color_id / colorId:
+        The color for the Event, by default :attr:`CalendarColorEnum.bold_red`.
+    event_type / eventType:
+        The Type of Event, by default :attr:`EventTypeEnum.default`.
+    id:
+        Generated by the Google API when the Event is inserted; you rarely set this.
+    location:
+        Where the Event takes place. A Google Maps style address.
+    transparency:
+        Whether the Event blocks time on the calendar. See :class:`EventTransparencyEnum`.
+    reminders:
+        Event specific reminders, max 5 overrides. Defaults to the Calendar's defaults.
+    start / end:
+        You MUST have either a `date` or a `dateTime`; `timeZone` is required with `dateTime`.
+
     """
+
+    # `calendar_id` is ours, not the API's — keep it out of the request body.
+    _LOCAL_ATTRS: ClassVar[set[str]] = {"calendar_id"}
+
+    # The API takes camelCase; these are the friendlier snake_case aliases we accept.
+    _KEY_ALIASES: ClassVar[dict[str, str]] = {"color_id": "colorId", "event_type": "eventType"}
 
     calendar_id: str
     summary: str
     end: EventTimeTyped
     start: EventTimeTyped
-    color_id: CalendarColorEnum = CalendarColorEnum.bold_red
+    colorId: CalendarColorEnum
     description: str
-    event_type: EventTypeEnum = EventTypeEnum.default
-    id: str | None
-    location: str | None
-    transparency = Literal["opaque", "transparent"]
-    reminders: ClassVar[dict] = {"useDefault": True}
+    eventType: EventTypeEnum
+    id: Union[str, None]
+    location: Union[str, None]
+    transparency: EventTransparencyEnum
+    reminders: RemindersTyped
 
     def __init__(self, calendar_id: str, data: EventsDraftTyped) -> None:
         self.calendar_id = calendar_id
+        # Defaults, overwritten by anything the caller actually passed.
+        self.colorId = CalendarColorEnum.bold_red
+        self.eventType = EventTypeEnum.default
+        self.reminders = {"useDefault": True}
+
         for key, value in data.items():
-            if key == "color_id":
-                setattr(self, "colorId", value)
+            # Normalize our snake_case aliases onto the API's camelCase field name.
+            attribute: str = self._KEY_ALIASES.get(key, key)
+            if attribute in {"start", "end"} and isinstance(value, dict):
+                self.validate_keys(attribute=attribute, data=value)
+            setattr(self, attribute, value)
 
-            elif key == "event_type":
-                setattr(self, "eventType", value)
+    def __repr__(self) -> str:
+        return f"Draft: {getattr(self, 'summary', '<no title>')} | Calendar: {self.calendar_id}"
 
-            elif (key == "end" or key == "start") and isinstance(value, dict):
-                self.validate_keys(attribute=key, data=value)
-                setattr(self, key, value)
+    def to_dict(self) -> dict[str, Any]:
+        """Build the API request body for this draft.
 
-            else:
-                setattr(self, key, value)
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The Event body suitable for `events().insert()`.
 
-    def to_dict(self) -> EventsDraftTyped:
         """
-        Returns the dunder attribute `__dict__`.
-        """
+        return {key: value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
 
-        return self.__dict__  # type: ignore
+    def validate_keys(self, attribute: str, data: Union[EventTimeTyped, dict[str, Any]]) -> None:
+        """Validate the keys of an :class:`EventTimeTyped` before we send it.
 
-    def validate_keys(self, attribute: str, data: EventTimeTyped | dict) -> None:
-        """
-        Validate's the keys of the data depending on the "key" parameter.
-
-        - Currently supports :class:`EventTime`.
+        Google rejects these combinations with an opaque 400, so we catch them here.
 
         Parameters
         -----------
         attribute: :class:`str`
-            The attribute we are validating has the proper dict keys.
-        data: :class:`EventTimeTyped | dict`
+            The attribute being validated; used for the error message.
+        data: :class:`EventTimeTyped` | :class:`dict`
             The datastructure to validate.
 
         Raises
         -------
         :exc:`ValueError`
-            You must have the key value of `timeZone` inside your attribute.
+            You must have the key value of `timeZone` alongside `dateTime`.
         :exc:`ValueError`
-            You must have the key value `date` or `dateTime` inside your attribute.
+            You must have the key value `date` or `dateTime`.
         :exc:`ValueError`
-            You cannot have both `date` and `dateTime` keys inside your attribute.
+            You cannot have both `date` and `dateTime` keys.
+
         """
-        if attribute == "end" or (attribute == "start" and isinstance(data, dict)):
-            has_date: str | None = data.get("date", None)
-            has_datetime: str | None = data.get("dateTime", None)
-            has_timezone: LocalTimeZoneEnum | str | None = data.get("timeZone", None)
+        has_date: Union[str, None] = data.get("date", None)
+        has_datetime: Union[str, None] = data.get("dateTime", None)
+        has_timezone: Union[LocalTimeZoneEnum, str, None] = data.get("timeZone", None)
 
-            # If we have a datetime object and no timezone. So we can set the event to a proper timezone.
-            if has_datetime is not None and has_timezone is None:
-                raise ValueError("You must have the key value of `timeZone` inside your %s", attribute)
+        # A datetime with no timezone is ambiguous; the API will not guess for us.
+        if has_datetime is not None and has_timezone is None:
+            raise ValueError(f"You must have the key value of `timeZone` inside your {attribute}.")
 
-            # If we have no date or datetime. We need something to pick a day.
-            if has_date is None and has_datetime is None:
-                raise ValueError("You must have the key value `date` or `dateTime` inside your %s", attribute)
+        # We need something to anchor the Event to a day.
+        if has_date is None and has_datetime is None:
+            raise ValueError(f"You must have the key value `date` or `dateTime` inside your {attribute}.")
 
-            # If we have a date and datetime, which is an error. We can't have both.
-            elif has_date is not None and has_datetime is not None:
-                raise ValueError("You cannot have both `date` and `dateTime` keys inside your %s", attribute)
+        # Both is contradictory — an all-day date and a specific time.
+        if has_date is not None and has_datetime is not None:
+            raise ValueError(f"You cannot have both `date` and `dateTime` keys inside your {attribute}.")
 
 
-class MailDraft(Resource, dict):
-    id: str
-    message: MailMessage
+# ---------------------------------------------------------------------------
+# Mail data models.
+# ---------------------------------------------------------------------------
+class MailMessageBody:
+    """The body of one part of a Mail message.
+
+    The API hands `data` back base64url encoded; we decode it on the way in.
+    """
+
+    attachmentId: str
+    size: int
+    data: str
 
     def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.data = ""
         for key, value in kwargs.items():
-            if key == "message":
-                setattr(self, "message", MailMessage(draft_id=self.id, **value))
+            if key == "data":
+                self.data = base64.urlsafe_b64decode(value).decode()
             else:
                 setattr(self, key, value)
 
     def __repr__(self) -> str:
-        return f"Mail Draft: {self.id} | Mail Message: {self.message}"
-
-    def create(self, **kwargs: Any) -> HttpRequest:
-        return super().create(**kwargs)  # type: ignore
-
-    def delete(self, **kwargs: Any) -> None:
-        return super().delete(**kwargs)  # type: ignore
-
-    def get(self, **kwargs: Any) -> HttpRequest:
-        return super().get(**kwargs)  # type: ignore
-
-    def list(self, **kwargs: Any) -> HttpRequest:
-        return super().list(**kwargs)  # type: ignore
-
-    def send(self) -> HttpRequest:
-        return super().send()  # type: ignore
-
-    def update(self, **kwargs: Any) -> HttpRequest:
-        return super().update(**kwargs)  # type: ignore
+        return f"Body: {len(self.data)} chars"
 
 
-class MailDraftList(Resource, dict):
-    """
-    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/list
+class MailMessageHeader:
+    """A single header on a Mail message part.
+
+    Attributes
+    -----------
+    name: :class:`str`
+        The header name before the `:` separator, e.g. "To".
+    value: :class:`str`
+        The header value after the `:` separator, e.g. "someuser@example.com".
+
     """
 
-    drafts: list[MailDraft]
-    nextPageToken: str
-    resultSizeEstimate: int
+    name: str
+    value: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def __repr__(self) -> str:
+        return f"{getattr(self, 'name', '<no name>')}: {getattr(self, 'value', '')}"
 
 
-class MailMessage(EmailMessage, Resource, dict):
-    """
+class MailMessagePart:
+    """One MIME part of a Mail message; parts nest arbitrarily deep."""
+
+    partId: str
+    mimeType: str
+    headers: list[MailMessageHeader]
+    body: MailMessageBody
+    parts: list[MailMessagePart]
+    filename: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.headers = []
+        self.parts = []
+        self.body = MailMessageBody()
+        for key, value in kwargs.items():
+            if key == "headers":
+                self.headers = [MailMessageHeader(**header) for header in value]
+            elif key == "body":
+                self.body = MailMessageBody(**value)
+            elif key == "parts":
+                self.parts = [MailMessagePart(**part) for part in value]
+            else:
+                setattr(self, key, value)
+
+    def __repr__(self) -> str:
+        return f"Part: {getattr(self, 'mimeType', '<no mimeType>')} | Headers: {len(self.headers)}"
+
+
+class MailMessage(EmailMessage):
+    """A Mail message, doubling as the builder for one you are about to send.
+
+    Subclasses :class:`EmailMessage` so we get MIME assembly for free — that is what
+    :meth:`to_email` and :meth:`to_base64` lean on.
+
     https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages
+
+    Parameters
+    -----------
+    draft_id: :class:`str`, optional
+        The ID of the Draft this message belongs to, by default "".
+    **kwargs: :class:`Any`
+        The JSON response for one message.
+
     """
 
     id: str
@@ -445,22 +665,49 @@ class MailMessage(EmailMessage, Resource, dict):
     raw: str
 
     def __init__(self, draft_id: str = "", **kwargs: Any) -> None:
-        setattr(self, "draft_id", draft_id)
-        setattr(self, "raw", "")
-        setattr(self, "payload", MailMessagePart())
+        # Build the EmailMessage machinery up front so this object is always a
+        # valid email, whether it came from a response or is being composed.
+        super().__init__()
+        self._raw_response: dict[str, Any] = kwargs
+        self.draft_id = draft_id
+        self.id = ""
+        self.labelIds = []
+        self.threadId = ""
+        self.raw = ""
+        self.payload = MailMessagePart()
         for key, value in kwargs.items():
             if key == "payload":
-                setattr(self, key, MailMessagePart(**value))
+                self.payload = MailMessagePart(**value)
             else:
                 setattr(self, key, value)
 
     def to_email(
         self,
-        to_email: str | list[str],
-        from_email: str | list[str],
+        to_email: Union[str, list[str]],
+        from_email: Union[str, list[str]],
         subject: str = " ",
         body: str = " ",
     ) -> MailMessage:
+        """Compose this object into a sendable email, replacing any existing content.
+
+        Parameters
+        -----------
+        to_email: :class:`str` | list[:class:`str`]
+            The recipient address(es).
+        from_email: :class:`str` | list[:class:`str`]
+            The sender address(es).
+        subject: :class:`str`, optional
+            The subject line, by default " ".
+        body: :class:`str`, optional
+            The plain text body, by default " ".
+
+        Returns
+        --------
+        :class:`MailMessage`
+            Itself, so you can chain straight into :meth:`prepared`.
+
+        """
+        # Reset the EmailMessage — this wipes any headers/content already set.
         super().__init__()
         self.set_content(body)
         self["To"] = to_email
@@ -469,96 +716,128 @@ class MailMessage(EmailMessage, Resource, dict):
         return self
 
     def to_base64(self) -> str:
+        """Return this message base64url encoded, which is what the API expects."""
         return base64.urlsafe_b64encode(self.as_bytes()).decode()
 
-    def prepared(self) -> dict:
-        """
-        Returns a pre-formed dict with the passed in encoded EmailMessage.
+    def prepared(self) -> dict[str, Any]:
+        """Return the pre-formed request body wrapping the encoded message.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The body suitable for `drafts().create()` / `drafts().update()`.
+
         """
         return {"message": {"raw": self.to_base64()}}
 
     def update_email(self, body: str) -> MailMessage:
+        """Append `body` to this message, preserving its To/From/Subject headers.
+
+        Parameters
+        -----------
+        body: :class:`str`
+            The text to append to the existing body.
+
+        Returns
+        --------
+        :class:`MailMessage`
+            Itself, recomposed with the combined body.
+
+        """
         subject = ""
         to_email = ""
         from_email = ""
-        for e in self.payload.headers:
-            if e.name == "Subject":
-                subject: str = e.value
-            if e.name == "To":
-                to_email: str = e.value
-            if e.name == "From":
-                from_email: str = e.value
+        for header in self.payload.headers:
+            if header.name == "Subject":
+                subject = header.value
+            elif header.name == "To":
+                to_email = header.value
+            elif header.name == "From":
+                from_email = header.value
 
-        return self.to_email(to_email=to_email, from_email=from_email, subject=subject, body=(self.payload.body.data + body))
+        return self.to_email(
+            to_email=to_email,
+            from_email=from_email,
+            subject=subject,
+            body=(self.payload.body.data + body),
+        )
 
     def __repr__(self) -> str:
-        return f"Mail Message Details:\nID: {self.id}\nLabels: {self.labelIds}\nThread ID:{self.threadId}\nContent: {self.payload.body.data}"
+        temp: list[str] = [
+            "Mail Message Details:",
+            f"ID: {self.id}",
+            f"Labels: {self.labelIds}",
+            f"Thread ID: {self.threadId}",
+            f"Content: {self.payload.body.data}",
+        ]
+        return "\n".join(temp)
 
     def __str__(self) -> str:
-        """
-        This is to overwrite :class:`EmailMessage` built-ins.
-        """
+        """Overwrite the :class:`EmailMessage` built-in, which dumps the raw MIME."""
         return self.__repr__()
 
 
-class MailMessageBody(dict):
-    attachmentId: str
-    size: int
-    data: str
+class MailDraft:
+    """A Draft in the mailbox.
 
-    def __init__(self, **kwargs: Any) -> None:
-        setattr(self, "data", "")
-        for key, value in kwargs.items():
-            if key == "data":
-                setattr(self, key, base64.urlsafe_b64decode(value).decode())
-            else:
-                setattr(self, key, value)
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts
 
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response for one Draft.
 
-class MailMessageHeader(dict):
-    name: str  # The name of the header before the : separator. For example, To.
-    value: str  # The value of the header after the : separator. For example, someuser@example.com.
-
-    def __init__(self, **kwargs: Any) -> None:
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
-class MailMessagePart(dict):
-    partId: str
-    mimeType: str
-    headers: list[MailMessageHeader]
-    body: MailMessageBody
-    parts: list[MailMessagePart]
-    filename: str
-
-    def __init__(self, **kwargs: Any) -> None:
-        for key, value in kwargs.items():
-            if key == "headers":
-                setattr(self, key, [MailMessageHeader(**i) for i in value])
-            elif key == "body":
-                setattr(self, key, MailMessageBody(**value))
-            else:
-                setattr(self, key, value)
-
-
-class MailUser(Resource):
-    def getProfile(self, **kwargs: Any) -> MailUserProfile:
-        return super().getProfile(**kwargs)  # type: ignore
-
-    def users(self, **kwargs: Any) -> MailUser:
-        return super().users(**kwargs)  # type: ignore
-
-    def labels(self, **kwargs: Any) -> MailUserLabel:
-        return super().users().labels(**kwargs)  # type: ignore
-
-    def drafts(self, **kwargs: Any) -> MailDraft:
-        return super().users().drafts(**kwargs)  # type: ignore
-
-
-class MailUserLabel(Resource, dict):
     """
+
+    id: str
+    message: MailMessage
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        # Pull `id` first — `message` needs it, and dict ordering is not a contract.
+        self.id = kwargs.get("id", "")
+        self.message = MailMessage(draft_id=self.id, **kwargs.get("message", {}))
+        for key, value in kwargs.items():
+            if key not in {"id", "message"}:
+                setattr(self, key, value)
+
+    def __repr__(self) -> str:
+        return f"Mail Draft: {self.id} | Mail Message: {self.message}"
+
+
+class MailDraftList:
+    """The response of a `drafts().list()` call.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/list
+    """
+
+    drafts: list[MailDraft]
+    nextPageToken: Union[str, None]
+    resultSizeEstimate: int
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.drafts = [MailDraft(**draft) for draft in kwargs.get("drafts", [])]
+        self.nextPageToken = kwargs.get("nextPageToken")
+        self.resultSizeEstimate = kwargs.get("resultSizeEstimate", 0)
+
+    def __len__(self) -> int:
+        return len(self.drafts)
+
+    def __repr__(self) -> str:
+        return f"Drafts: {len(self.drafts)} | NextPageToken: {self.nextPageToken}"
+
+
+class MailUserLabel:
+    """A label on the Mail account.
+
     https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels
+
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response for one label.
+
     """
 
     id: str
@@ -572,23 +851,163 @@ class MailUserLabel(Resource, dict):
     threadsUnread: int
     color: MailLabelColorEnum
 
-    def __init__(self, **kwargs: MailLabelTyped) -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def list(self, **kwargs: Any) -> HttpRequest:
-        """
-        List of labels. Note that each label resource only contains an id, name, messageListVisibility, labelListVisibility, and type. The labels.get method can fetch additional label details.
-
-        """
-        return super().list(**kwargs)  # type: ignore
-
-    def create(self, **kwargs: Any) -> HttpRequest:
-        return super().create(**kwargs)  # type: ignore
+    def __repr__(self) -> str:
+        return f"{getattr(self, 'name', '<no name>')} | {getattr(self, 'id', '<no id>')}"
 
 
-class MailUserProfile(Resource):
+class MailUserProfile:
+    """The profile of the authenticated Mail account."""
+
     emailAddress: str
     messagesTotal: int
     threadsTotal: int
     historyId: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def __repr__(self) -> str:
+        return f"{getattr(self, 'emailAddress', '<no address>')} | Messages: {getattr(self, 'messagesTotal', 0)}"
+
+
+# ---------------------------------------------------------------------------
+# Keep data models.
+# ---------------------------------------------------------------------------
+class KeepNoteDraft:
+    """A note to be created via :meth:`gap.services.KeepService.create_note`.
+
+    Mirrors the style of :class:`EventsDraft`; call :meth:`to_dict` to produce the
+    request body the Keep API expects.
+
+    Parameters
+    -----------
+    title: :class:`str`
+        The note title.
+    text: :class:`str` | None, optional
+        Plain text body for the note. Mutually exclusive with `list_items`, by default None.
+    list_items: list[tuple[:class:`str`, :class:`bool`]] | None, optional
+        Checklist items as `(text, checked)` tuples. Mutually exclusive with `text`, by default None.
+
+    Raises
+    -------
+    :exc:`ValueError`
+        If both `text` and `list_items` are provided.
+
+    """
+
+    title: str
+    text: Union[str, None]
+    list_items: Union[list[tuple[str, bool]], None]
+
+    def __init__(
+        self,
+        title: str,
+        text: Union[str, None] = None,
+        list_items: Union[list[tuple[str, bool]], None] = None,
+    ) -> None:
+        # A Keep note body is one or the other; the API has no "both" shape.
+        if text is not None and list_items is not None:
+            raise ValueError("A KeepNoteDraft may have `text` or `list_items`, not both.")
+        self.title = title
+        self.text = text
+        self.list_items = list_items
+
+    def __repr__(self) -> str:
+        return f"Note Draft: {self.title}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Build the Keep API request body for this draft.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The body suitable for `notes().create()`.
+
+        """
+        body: dict[str, Any]
+        if self.list_items is not None:
+            body = {"list": {"listItems": [{"text": {"text": text}, "checked": checked} for text, checked in self.list_items]}}
+        else:
+            body = {"text": {"text": self.text or ""}}
+        return {"title": self.title, "body": body}
+
+
+class KeepNote:
+    """A single Keep note returned by the API.
+
+    https://developers.google.com/workspace/keep/api/reference/rest/v1/notes
+
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response for one note.
+
+    """
+
+    name: str  # Resource name, e.g. "notes/xxxxxxxxxxxx".
+    title: str
+    body: dict[str, Any]
+    createTime: str
+    updateTime: str
+    trashed: bool
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.name = ""
+        self.title = ""
+        self.body = {}
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    @property
+    def id(self) -> str:
+        """The bare note ID — the segment after `notes/` in :attr:`name`."""
+        return self.name.rsplit("/", maxsplit=1)[-1]
+
+    @property
+    def text(self) -> str:
+        """A best-effort plain text rendering of the note body, text or checklist."""
+        if "text" in self.body:
+            return self.body["text"].get("text", "")
+        if "list" in self.body:
+            items: list[dict[str, Any]] = self.body["list"].get("listItems", [])
+            return "\n".join(f"[{'x' if item.get('checked') else ' '}] {item.get('text', {}).get('text', '')}" for item in items)
+        return ""
+
+    def __repr__(self) -> str:
+        return f"{self.title or '<untitled>'} | {self.name or '<no name>'}"
+
+
+class KeepNoteList:
+    """The paginated response of :meth:`gap.services.KeepService.list_notes`.
+
+    Parameters
+    -----------
+    **kwargs: :class:`Any`
+        The JSON response of a `notes().list()` call.
+
+    """
+
+    notes: list[KeepNote]
+    nextPageToken: Union[str, None]
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.notes = [KeepNote(**note) for note in kwargs.get("notes", [])]
+        self.nextPageToken = kwargs.get("nextPageToken")
+
+    def __len__(self) -> int:
+        return len(self.notes)
+
+    def __iter__(self) -> Any:
+        return iter(self.notes)
+
+    def __repr__(self) -> str:
+        return f"Notes: {len(self.notes)} | NextPageToken: {self.nextPageToken}"

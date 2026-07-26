@@ -1,0 +1,9 @@
+{
+    "autoDocstring.customTemplatePath": "./gap/numpy_templates/numpy_overwrite.mustache",
+    "autoDocstring.startOnNewLine": false,
+    "autoDocstring.quoteStyle": "\"\"\"",
+    "autoDocstring.guessTypes": true,
+    "autoDocstring.generateDocstringOnEnter": true,
+    "python.terminal.activateEnvironment": true,
+    "claudeCodeChat.permissions.yoloMode": false
+}
