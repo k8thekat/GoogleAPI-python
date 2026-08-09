@@ -31,8 +31,17 @@ blocking. Callers who need async should wrap calls in `asyncio.to_thread`.
   2. **Data models** (`Events`, `EventsList`, `MailMessage`, `KeepNote`, ...) are plain
      classes built from a JSON response. They hold the raw payload in `_raw` and expose
      attributes.
-- **`gap/_types.py`** — `TypedDict` definitions mirroring the API's JSON shapes. Field
-  names match Google's camelCase exactly; do not snake_case them.
+- **Casing is a boundary, not a preference.** Google speaks camelCase; our attributes are
+  snake_case. Data models convert on the way in with `to_snake_case()` in their `setattr`
+  loop, and `to_dict()` / `prepared()` convert back with `to_camel_case()` — the API only
+  ever sees its own spelling. The conversion is its own inverse for every key shape these
+  APIs use; `_IRREGULAR_FIELDS` is where a field that converts *correctly but unreadably*
+  gets spelled by hand (`iCalUID` → `ical_uid`, not `i_cal_u_i_d`). Add a pair there
+  rather than special casing a call site. Anything held as a raw `dict` — `Events.start`, a Keep note `body`,
+  a `reminders` payload — keeps the API's keys, because it *is* the API's structure.
+- **`gap/_types.py`** — `TypedDict` definitions mirroring the API's JSON shapes. These are
+  request bodies rather than our attributes, so field names match Google's camelCase
+  exactly; do not snake_case them.
 - **`gap/_enums.py`** — `StrEnum`/`IntEnum` for API constant values.
 - **`local.py`** — developer driver, gitignored, not shipped.
 

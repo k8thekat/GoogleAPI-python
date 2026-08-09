@@ -34,7 +34,9 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
 from __future__ import annotations
 
 import base64
+import re
 from email.message import EmailMessage
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 from googleapiclient.discovery import Resource
@@ -67,11 +69,100 @@ __all__ = (
     "MailMessage",
     "MailMessageBody",
     "MailMessageHeader",
+    "MailMessageList",
     "MailMessagePart",
+    "MailMessagesResource",
     "MailUserLabel",
     "MailUserProfile",
     "MailUserResource",
+    "MailUsersResource",
+    "to_camel_case",
+    "to_snake_case",
 )
+
+
+# ---------------------------------------------------------------------------
+# Field name conversion.
+#
+# Google speaks camelCase on the wire; we expose snake_case attributes. Every data
+# model converts on the way in, and the `to_dict()` / `prepared()` builders convert
+# back on the way out — the API only ever sees its own spelling.
+#
+# The `_types.py` TypedDicts are the request bodies themselves, not our attributes,
+# so they stay camelCase. The same goes for any raw dict we hold verbatim, such as
+# `Events.start` or a Keep note `body`.
+# ---------------------------------------------------------------------------
+_CAMEL_BOUNDARY: re.Pattern[str] = re.compile(r"(?<!^)(?=[A-Z])")
+
+# Fields we spell by hand instead of by the rule below, camelCase -> snake_case.
+#
+# This is about readability, not correctness: the rule round trips `iCalUID` losslessly,
+# but only as `i_cal_u_i_d`, because it has no way to know `UID` is one acronym rather
+# than three words. Anything that reads badly goes here. Both directions follow from the
+# one entry — the reverse map is derived, not written out, so they cannot drift apart.
+#
+# The rule itself is its own inverse for every key shape these three APIs use, i.e.
+# lowercase-first camelCase. It does NOT round trip a key that starts with a capital
+# (`ABTest` -> `a_b_test` -> `aBTest`) or one that already contains an underscore
+# (`some_key` -> `someKey`). Google sends neither; if that ever changes, the fix is an
+# entry here rather than a new branch in the functions.
+_IRREGULAR_FIELDS: dict[str, str] = {"iCalUID": "ical_uid"}
+_IRREGULAR_FIELDS_INVERTED: dict[str, str] = {snake: camel for camel, snake in _IRREGULAR_FIELDS.items()}
+
+
+# Field names are a small fixed set — a few dozen per API — so caching turns the whole
+# conversion into a dict lookup after each one is first seen. The bound is there because
+# the input is whatever keys a response arrived with, not something we control.
+#
+# What that costs: a cache is only correct while the function is pure. Both of these read
+# `_IRREGULAR_FIELDS`, which is filled at import and never touched again — add an entry at
+# runtime and anything already converted keeps its old answer until `cache_clear()`. It is
+# also only free because these are module level functions; on a method `self` lands in the
+# key and the cache pins every instance it ever saw, for the life of the process.
+@lru_cache(maxsize=512)
+def to_snake_case(field: str) -> str:
+    """Convert one of Google's camelCase JSON keys into our attribute name.
+
+    Parameters
+    -----------
+    field: :class:`str`
+        The JSON key as it arrived, e.g. "nextPageToken".
+
+    Returns
+    --------
+    :class:`str`
+        The attribute name we store it under, e.g. "next_page_token". A key that is
+        already snake_case, or a single lowercase word, comes back unchanged.
+
+    """
+    if field in _IRREGULAR_FIELDS:
+        return _IRREGULAR_FIELDS[field]
+    return _CAMEL_BOUNDARY.sub("_", field).lower()
+
+
+# Cached on the same terms as `to_snake_case` above.
+@lru_cache(maxsize=512)
+def to_camel_case(field: str) -> str:
+    """Convert one of our attribute names back into Google's camelCase JSON key.
+
+    The exact inverse of :func:`to_snake_case`, so a response can be read in and
+    sent back out without losing a field.
+
+    Parameters
+    -----------
+    field: :class:`str`
+        The attribute name, e.g. "next_page_token".
+
+    Returns
+    --------
+    :class:`str`
+        The JSON key Google expects, e.g. "nextPageToken".
+
+    """
+    if field in _IRREGULAR_FIELDS_INVERTED:
+        return _IRREGULAR_FIELDS_INVERTED[field]
+    head, *tail = field.split("_")
+    return head + "".join(part.title() for part in tail)
 
 
 # ---------------------------------------------------------------------------
@@ -165,15 +256,33 @@ class MailLabelsResource(Resource):
         return super().get(**kwargs)  # type: ignore[misc]
 
 
+class MailMessagesResource(Resource):
+    """Typing shim for `users().messages()` of the Gmail API.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages
+    """
+
+    def list(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().list(**kwargs)  # type: ignore[misc]
+
+    def get(self, **kwargs: Any) -> HttpRequest:  # noqa: D102
+        return super().get(**kwargs)  # type: ignore[misc]
+
+
 class MailUsersResource(Resource):
     """Typing shim for the `users()` collection of the Gmail API."""
 
     def getProfile(self, **kwargs: Any) -> HttpRequest:
+        """The profile of this user."""
         return super().getProfile(**kwargs)  # type: ignore[misc]
 
     def labels(self, **kwargs: Any) -> MailLabelsResource:
         """The Labels collection for this user."""
         return super().labels(**kwargs)  # type: ignore[misc]
+
+    def messages(self, **kwargs: Any) -> MailMessagesResource:
+        """The Messages collection for this user."""
+        return super().messages(**kwargs)  # type: ignore[misc]
 
     def drafts(self, **kwargs: Any) -> MailDraftsResource:
         """The Drafts collection for this user."""
@@ -232,22 +341,22 @@ class CalendarList:
 
     id: str  # The unique Calendar ID, this is what every other call wants.
     summary: str  # aka the calendar Title or Name.
-    summaryOverride: str
-    colorId: str
+    summary_override: str
+    color_id: str
     hidden: bool
     selected: bool
     primary: bool
     deleted: bool
-    defaultReminders: list[dict[str, Union[str, int]]]
-    notificationSettings: dict[str, list[dict[str, str]]]
+    default_reminders: list[dict[str, Union[str, int]]]
+    notification_settings: dict[str, list[dict[str, str]]]
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
-        return f"{getattr(self, 'summary', '<no summary>')} | {getattr(self, 'id', '<no id>')} | {getattr(self, 'colorId', '')}"
+        return f"{getattr(self, 'summary', '<no summary>')} | {getattr(self, 'id', '<no id>')} | {getattr(self, 'color_id', '')}"
 
 
 class CalendarListEntry:
@@ -270,22 +379,22 @@ class CalendarListEntry:
 
     kind: str
     etag: str
-    nextPageToken: Union[str, None]
-    nextSyncToken: Union[str, None]
+    next_page_token: Union[str, None]
+    next_sync_token: Union[str, None]
     events: list[CalendarList]
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         # Defaults first so a response missing these keys still leaves us usable.
-        self.nextPageToken = None
-        self.nextSyncToken = None
+        self.next_page_token = None
+        self.next_sync_token = None
         self.events = []
         for key, value in kwargs.items():
             # `items` is the array of calendars; everything else is scalar metadata.
             if key == "items":
                 self.events = [CalendarList(**entry) for entry in value]
             else:
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
         return f"{getattr(self, 'kind', '<no kind>')} | Calendars: {len(self.events)}"
@@ -314,7 +423,7 @@ class Events:
     id: str
     calendar_id: str
     status: str
-    htmlLink: str
+    html_link: str
     created: str  # ISO format
     updated: str  # ISO format
     summary: str
@@ -322,19 +431,19 @@ class Events:
     organizer: Union[EventUserTyped, dict[str, Any]]
     start: EventTimeTyped
     end: EventTimeTyped
-    recurringEventId: str
-    originalStartTime: Union[EventTimeTyped, None]
+    recurring_event_id: str
+    original_start_time: Union[EventTimeTyped, None]
     transparency: str
     visibility: str
-    iCalUID: str
+    ical_uid: str
     sequence: int
     attendees: list[EventUserTyped]
-    attendeesOmitted: bool
-    extendedProperties: dict[str, dict[str, str]]
+    attendees_omitted: bool
+    extended_properties: dict[str, dict[str, str]]
     description: Union[str, None]
     location: Union[str, None]
     reminders: RemindersTyped
-    colorId: Union[CalendarColorEnum, None]
+    color_id: Union[CalendarColorEnum, None]
 
     def __init__(self, calendar_id: str, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
@@ -343,11 +452,11 @@ class Events:
         # does not blow up on attribute access.
         self.description = None
         self.location = None
-        self.colorId = None
+        self.color_id = None
         self.start = {}
         self.end = {}
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and self.id == other.id
@@ -373,7 +482,8 @@ class Events:
         """Build the API request body for this Event.
 
         Strips our locally tracked attributes (`_raw`, `calendar_id`) — the API
-        rejects or ignores unknown fields and we should not be sending them.
+        rejects or ignores unknown fields and we should not be sending them — and
+        puts the field names back into Google's camelCase.
 
         Returns
         --------
@@ -381,7 +491,7 @@ class Events:
             The Event body suitable for `events().insert()` / `events().update()`.
 
         """
-        return {key: value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
+        return {to_camel_case(key): value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
 
 
 class EventsList:
@@ -408,11 +518,11 @@ class EventsList:
     summary: str
     description: str
     updated: str  # ISO format
-    timeZone: str
-    accessRole: str
-    defaultReminders: list[dict[str, Union[str, int]]]
-    nextPageToken: str
-    nextSyncToken: str
+    time_zone: str
+    access_role: str
+    default_reminders: list[dict[str, Union[str, int]]]
+    next_page_token: str
+    next_sync_token: str
     events: list[Events]
     calendar_id: str
 
@@ -424,7 +534,7 @@ class EventsList:
         self.events = [Events(calendar_id=calendar_id, **entry) for entry in kwargs.get("items", [])]
         for key, value in kwargs.items():
             if key != "items":
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def __len__(self) -> int:
         return len(self.events)
@@ -455,9 +565,9 @@ class EventsDraft:
         The Title for the Event.
     description:
         The Description for the Event.
-    color_id / colorId:
+    color_id:
         The color for the Event, by default :attr:`CalendarColorEnum.bold_red`.
-    event_type / eventType:
+    event_type:
         The Type of Event, by default :attr:`EventTypeEnum.default`.
     id:
         Generated by the Google API when the Event is inserted; you rarely set this.
@@ -475,16 +585,13 @@ class EventsDraft:
     # `calendar_id` is ours, not the API's — keep it out of the request body.
     _LOCAL_ATTRS: ClassVar[set[str]] = {"calendar_id"}
 
-    # The API takes camelCase; these are the friendlier snake_case aliases we accept.
-    _KEY_ALIASES: ClassVar[dict[str, str]] = {"color_id": "colorId", "event_type": "eventType"}
-
     calendar_id: str
     summary: str
     end: EventTimeTyped
     start: EventTimeTyped
-    colorId: CalendarColorEnum
+    color_id: CalendarColorEnum
     description: str
-    eventType: EventTypeEnum
+    event_type: EventTypeEnum
     id: Union[str, None]
     location: Union[str, None]
     transparency: EventTransparencyEnum
@@ -493,13 +600,14 @@ class EventsDraft:
     def __init__(self, calendar_id: str, data: EventsDraftTyped) -> None:
         self.calendar_id = calendar_id
         # Defaults, overwritten by anything the caller actually passed.
-        self.colorId = CalendarColorEnum.bold_red
-        self.eventType = EventTypeEnum.default
+        self.color_id = CalendarColorEnum.bold_red
+        self.event_type = EventTypeEnum.default
         self.reminders = {"useDefault": True}
 
         for key, value in data.items():
-            # Normalize our snake_case aliases onto the API's camelCase field name.
-            attribute: str = self._KEY_ALIASES.get(key, key)
+            # `EventsDraftTyped` is the API's own camelCase shape, but a snake_case key
+            # passes through this unchanged — so either spelling works at the call site.
+            attribute: str = to_snake_case(key)
             if attribute in {"start", "end"} and isinstance(value, dict):
                 self.validate_keys(attribute=attribute, data=value)
             setattr(self, attribute, value)
@@ -508,7 +616,7 @@ class EventsDraft:
         return f"Draft: {getattr(self, 'summary', '<no title>')} | Calendar: {self.calendar_id}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Build the API request body for this draft.
+        """Build the API request body for this draft, back in Google's camelCase.
 
         Returns
         --------
@@ -516,7 +624,7 @@ class EventsDraft:
             The Event body suitable for `events().insert()`.
 
         """
-        return {key: value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
+        return {to_camel_case(key): value for key, value in self.__dict__.items() if key not in self._LOCAL_ATTRS}
 
     def validate_keys(self, attribute: str, data: Union[EventTimeTyped, dict[str, Any]]) -> None:
         """Validate the keys of an :class:`EventTimeTyped` before we send it.
@@ -566,7 +674,7 @@ class MailMessageBody:
     The API hands `data` back base64url encoded; we decode it on the way in.
     """
 
-    attachmentId: str
+    attachment_id: str
     size: int
     data: str
 
@@ -575,9 +683,13 @@ class MailMessageBody:
         self.data = ""
         for key, value in kwargs.items():
             if key == "data":
-                self.data = base64.urlsafe_b64decode(value).decode()
+                # Senders are not obliged to give us valid UTF-8, and this runs during
+                # `MailMessage(**payload)` construction — so an un-replaced byte takes down
+                # the whole response, not just this part. `_raw["data"]` keeps the original
+                # base64 for anyone who needs the bytes back.
+                self.data = base64.urlsafe_b64decode(value).decode(errors="replace")
             else:
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
         return f"Body: {len(self.data)} chars"
@@ -601,7 +713,7 @@ class MailMessageHeader:
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
         return f"{getattr(self, 'name', '<no name>')}: {getattr(self, 'value', '')}"
@@ -610,8 +722,8 @@ class MailMessageHeader:
 class MailMessagePart:
     """One MIME part of a Mail message; parts nest arbitrarily deep."""
 
-    partId: str
-    mimeType: str
+    part_id: str
+    mime_type: str
     headers: list[MailMessageHeader]
     body: MailMessageBody
     parts: list[MailMessagePart]
@@ -630,10 +742,10 @@ class MailMessagePart:
             elif key == "parts":
                 self.parts = [MailMessagePart(**part) for part in value]
             else:
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
-        return f"Part: {getattr(self, 'mimeType', '<no mimeType>')} | Headers: {len(self.headers)}"
+        return f"Part: {getattr(self, 'mime_type', '<no mime_type>')} | Headers: {len(self.headers)}"
 
 
 class MailMessage(EmailMessage):
@@ -655,13 +767,13 @@ class MailMessage(EmailMessage):
 
     id: str
     draft_id: str
-    threadId: str
-    labelIds: list[str]
+    thread_id: str
+    label_ids: list[str]
     snippet: str
-    historyId: str
-    internalDate: str
+    history_id: str
+    internal_date: str
     payload: MailMessagePart
-    sizeEstimate: int
+    size_estimate: int
     raw: str
 
     def __init__(self, draft_id: str = "", **kwargs: Any) -> None:
@@ -671,15 +783,15 @@ class MailMessage(EmailMessage):
         self._raw_response: dict[str, Any] = kwargs
         self.draft_id = draft_id
         self.id = ""
-        self.labelIds = []
-        self.threadId = ""
+        self.label_ids = []
+        self.thread_id = ""
         self.raw = ""
         self.payload = MailMessagePart()
         for key, value in kwargs.items():
             if key == "payload":
                 self.payload = MailMessagePart(**value)
             else:
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def to_email(
         self,
@@ -766,8 +878,8 @@ class MailMessage(EmailMessage):
         temp: list[str] = [
             "Mail Message Details:",
             f"ID: {self.id}",
-            f"Labels: {self.labelIds}",
-            f"Thread ID: {self.threadId}",
+            f"Labels: {self.label_ids}",
+            f"Thread ID: {self.thread_id}",
             f"Content: {self.payload.body.data}",
         ]
         return "\n".join(temp)
@@ -799,7 +911,7 @@ class MailDraft:
         self.message = MailMessage(draft_id=self.id, **kwargs.get("message", {}))
         for key, value in kwargs.items():
             if key not in {"id", "message"}:
-                setattr(self, key, value)
+                setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
         return f"Mail Draft: {self.id} | Mail Message: {self.message}"
@@ -812,20 +924,50 @@ class MailDraftList:
     """
 
     drafts: list[MailDraft]
-    nextPageToken: Union[str, None]
-    resultSizeEstimate: int
+    next_page_token: Union[str, None]
+    result_size_estimate: int
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         self.drafts = [MailDraft(**draft) for draft in kwargs.get("drafts", [])]
-        self.nextPageToken = kwargs.get("nextPageToken")
-        self.resultSizeEstimate = kwargs.get("resultSizeEstimate", 0)
+        self.next_page_token = kwargs.get("nextPageToken")
+        self.result_size_estimate = kwargs.get("resultSizeEstimate", 0)
 
     def __len__(self) -> int:
         return len(self.drafts)
 
     def __repr__(self) -> str:
-        return f"Drafts: {len(self.drafts)} | NextPageToken: {self.nextPageToken}"
+        return f"Drafts: {len(self.drafts)} | Next Page Token: {self.next_page_token}"
+
+
+class MailMessageList:
+    """The response of a `messages().list()` call.
+
+    Gmail returns `id`/`threadId` stubs here, never the message itself — every other
+    attribute of these :class:`MailMessage` objects is absent. Feed each `id` to
+    :meth:`MailService.get_message` to fetch one in full.
+
+    https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list
+    """
+
+    messages: list[MailMessage]
+    next_page_token: Union[str, None]
+    result_size_estimate: int
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._raw: dict[str, Any] = kwargs
+        self.messages = [MailMessage(**message) for message in kwargs.get("messages", [])]
+        self.next_page_token = kwargs.get("nextPageToken")
+        self.result_size_estimate = kwargs.get("resultSizeEstimate", 0)
+
+    def __len__(self) -> int:
+        return len(self.messages)
+
+    def __iter__(self) -> Any:
+        return iter(self.messages)
+
+    def __repr__(self) -> str:
+        return f"Messages: {len(self.messages)} | Next Page Token: {self.next_page_token}"
 
 
 class MailUserLabel:
@@ -842,19 +984,19 @@ class MailUserLabel:
 
     id: str
     name: str
-    messageListVisibility: MailMessageListVisibilityEnum
-    labelListVisibility: MailLabelListVisiblityEnum
+    message_list_visibility: MailMessageListVisibilityEnum
+    label_list_visibility: MailLabelListVisiblityEnum
     type: MailTypeEnum
-    messagesTotal: int
-    messagesUnread: int
-    threadsTotal: int
-    threadsUnread: int
+    messages_total: int
+    messages_unread: int
+    threads_total: int
+    threads_unread: int
     color: MailLabelColorEnum
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
         return f"{getattr(self, 'name', '<no name>')} | {getattr(self, 'id', '<no id>')}"
@@ -863,18 +1005,18 @@ class MailUserLabel:
 class MailUserProfile:
     """The profile of the authenticated Mail account."""
 
-    emailAddress: str
-    messagesTotal: int
-    threadsTotal: int
-    historyId: str
+    email_address: str
+    messages_total: int
+    threads_total: int
+    history_id: str
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     def __repr__(self) -> str:
-        return f"{getattr(self, 'emailAddress', '<no address>')} | Messages: {getattr(self, 'messagesTotal', 0)}"
+        return f"{getattr(self, 'email_address', '<no address>')} | Messages: {getattr(self, 'messages_total', 0)}"
 
 
 # ---------------------------------------------------------------------------
@@ -954,8 +1096,8 @@ class KeepNote:
     name: str  # Resource name, e.g. "notes/xxxxxxxxxxxx".
     title: str
     body: dict[str, Any]
-    createTime: str
-    updateTime: str
+    create_time: str
+    update_time: str
     trashed: bool
 
     def __init__(self, **kwargs: Any) -> None:
@@ -964,7 +1106,7 @@ class KeepNote:
         self.title = ""
         self.body = {}
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            setattr(self, to_snake_case(key), value)
 
     @property
     def id(self) -> str:
@@ -996,12 +1138,12 @@ class KeepNoteList:
     """
 
     notes: list[KeepNote]
-    nextPageToken: Union[str, None]
+    next_page_token: Union[str, None]
 
     def __init__(self, **kwargs: Any) -> None:
         self._raw: dict[str, Any] = kwargs
         self.notes = [KeepNote(**note) for note in kwargs.get("notes", [])]
-        self.nextPageToken = kwargs.get("nextPageToken")
+        self.next_page_token = kwargs.get("nextPageToken")
 
     def __len__(self) -> int:
         return len(self.notes)
@@ -1010,4 +1152,4 @@ class KeepNoteList:
         return iter(self.notes)
 
     def __repr__(self) -> str:
-        return f"Notes: {len(self.notes)} | NextPageToken: {self.nextPageToken}"
+        return f"Notes: {len(self.notes)} | Next Page Token: {self.next_page_token}"

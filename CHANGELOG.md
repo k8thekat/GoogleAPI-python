@@ -22,7 +22,21 @@
   no meaning here. Replaced by `ini_load()` + `GoogleService.from_ini()`, reading a
   `[GAP]` section.
 - `_types.EventUser` renamed to `EventUserTyped`, for consistency with the rest of the module.
+- **Every data model attribute is snake_case now.** They used to be whatever Google sent,
+  because the models `setattr` straight off the response — so the wire's camelCase leaked
+  into the Python surface. Models convert on the way in, and `to_dict()` / `prepared()`
+  convert back, so the request bodies are unchanged. `event.htmlLink` → `event.html_link`,
+  `message.labelIds` → `message.label_ids`, `draft_list.nextPageToken` →
+  `draft_list.next_page_token`, and so on for every model in the package.
+  Two things deliberately keep the API's casing: the `_types.py` TypedDicts, which *are*
+  request bodies, and any raw dict we hold verbatim — `Events.start`, `reminders`, a Keep
+  note `body`. `EventsDraft` accepts either spelling, as it did before.
 - Services log through a module level `LOGGER` rather than a `_logger` class attribute.
+- `MailService.SCOPES` narrowed from `https://mail.google.com/` — full mailbox control,
+  permanent delete included — to `gmail.readonly` + `gmail.compose`, which covers every
+  method on the class. **This invalidates your existing `mail_token.json`**; the next
+  call re-runs the browser flow on its own (see the `_authorize` fix below) and you will
+  be asked to grant the new pair.
 
 ### Fixed
 
@@ -48,6 +62,18 @@
   the shim, which mistyped the call chain.
 - `raise ValueError("...%s", value)` in several spots built a two-element tuple instead
   of formatting the message. Now uses f-strings.
+- `MailMessageBody` decoded its base64 `data` with a bare `.decode()`, so a body that was
+  not valid UTF-8 raised `UnicodeDecodeError`. That fires while `MailMessage(**payload)`
+  is being built, meaning one malformed message took down the whole response rather than
+  just its own part. Now decodes with `errors="replace"`; `_raw["data"]` still holds the
+  original base64 if you need the bytes.
+- `MailService.get_labels()` extended the `LABELS` cache instead of replacing it, so every
+  call after the first duplicated the entire label set.
+- `GoogleService._authorize()` let a `RefreshError` out of `creds.refresh()`. A revoked
+  token, or one cached under different `SCOPES` than the service now asks for, crashed
+  every call until you worked out that the token file had to be deleted by hand. It now
+  logs and falls through to the browser flow, which is what the token file being unusable
+  means in the first place.
 
 ### Added
 
@@ -66,6 +92,19 @@
 - `CalendarService.get_calendars()` — the typed `list[CalendarList]` behind
   `get_calendar_list()`, so callers stop parsing the display string.
 - `MailService.get_profile()` and `MailService.get_drafts()`.
+- `MailService.search_messages()` — search the mailbox with the same query syntax as the
+  Gmail search bar, optionally filtered by Label ID and scoped past SPAM/TRASH. Returns a
+  page of results plus the `nextPageToken` to ask for the next one.
+- `MailService.get_message()` — fetch one message by ID. Mirrors `get_draft`: logs and
+  returns None on `HttpError` rather than raising.
+- `MailMessageList`, the response model for the above, and `MailMessagesResource`, the
+  typing shim for `users().messages()`. `MailUsersResource` grew a `messages()` accessor;
+  the mail side previously had no typed entry point to the messages endpoints at all.
+- `MailUsersResource` is now exported from `gap.modules`; it was reachable off
+  `MailUserResource.users()` but was missing from `__all__`.
+- `to_snake_case()` / `to_camel_case()` — the field name conversion the models run on,
+  exported because `update_event` needs it to apply a camelCase change set onto a model,
+  and because anything building request bodies by hand will want the same mapping.
 - `EventTransparencyEnum`.
 - `RemindersTyped` / `ReminderOverridesTyped`, replacing the bare `dict` annotation.
 - `Keep` TypedDicts: `KeepNoteTyped`, `KeepNoteBodyTyped`, `KeepNoteListTyped`.
@@ -98,6 +137,23 @@ mail = MailService(token_path=Path(__file__).parent)
 If you referenced the shim classes directly, `Calendar` → `CalendarResource` and
 `MailUser` → `MailUserResource`. If you relied on the data models being `dict`
 subclasses (`event["summary"]`), use attribute access or `to_dict()` instead.
+
+Model attributes are snake_case, so any multi-word field you read needs renaming:
+
+```python
+# 3.x
+link, labels, token = event.htmlLink, message.labelIds, drafts.nextPageToken
+
+# 4.0.0
+link, labels, token = event.html_link, message.label_ids, drafts.next_page_token
+```
+
+Request bodies are unaffected — `to_dict()` and `prepared()` still emit Google's keys, and
+anything you pass *in* as a `TypedDict` is still the API's camelCase shape.
+
+`MailService` asks for narrower `SCOPES` than 3.x did, so your cached `mail_token.json`
+cannot be renewed against them. Nothing to do by hand — the first call after upgrading
+logs a warning and reopens the browser consent screen, then caches the new token.
 
 `MailService` still looks for `mail_client_secret.json` before falling back to the
 shared `client_secret.json`, so existing credential layouts keep working — you only

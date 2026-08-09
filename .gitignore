@@ -91,5 +91,4 @@ cache/
 # Project specific
 *logs
 *local_data/
-local.py
 _responses/

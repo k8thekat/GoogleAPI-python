@@ -17,7 +17,10 @@ A small todo list local to the project. Legend: ⭐ done | 🗨 suggestion | ⚠
 - ⭐ Calendar IDs now live in the ini. Added `ini_load_calendars()` reading a `[GAP.Calendars]` `name = id` section into `list[CalendarID]`, `CalendarService.from_ini()` filling a per-instance `calendars`, `resolve_calendar(name)` for name → ID lookups, and `get_all_events(calendar=None)` defaulting to the configured set.
 - ⛔ Dropped the `CALENDAR_IDS = a, b, c` / `getlist()` idea in favour of the section mapping. A flat list throws away the `name` half of `CalendarID`, and a section sidesteps escaping if an ID ever contains a comma. `ini_load()` keeps its `list` converter for other options.
 - 🗨 `ini_load_calendars()` builds its own parser with `optionxform = str` so a `Work` Calendar does not come back `work`. If a second case-sensitive section ever shows up, that parser setup wants factoring out of both loaders.
-- 🗨 `SCOPES` for `MailService` is `https://mail.google.com/` (full mailbox access). The draft-only workflow we implement would be satisfied by `gmail.compose`. Narrowing it forces every user to re-auth, so it is worth doing deliberately in one release.
+- ⭐ Narrowed `MailService.SCOPES` from `https://mail.google.com/` to `gmail.readonly` + `gmail.compose`. `readonly` rather than `compose` alone because we now search and read messages, not just drafts. Done in 4.0.0 since that release is already breaking, and `_authorize()` re-runs the browser flow itself rather than leaving a dead token behind.
+- ⭐ `_authorize()` no longer lets a `RefreshError` escape — a revoked token, or one cached under other `SCOPES`, now falls through to the login flow instead of crashing every call.
+- ⭐ Added `search_messages()` and `get_message()`, plus the `MailMessagesResource` shim and `MailMessageList` model. `MailService` previously had no way to reach the messages endpoints at all.
+- 🗨 `search_messages()` returns one page of id/threadId stubs, so reading N results costs N+1 requests. A `walk` helper that follows `nextPageToken`, or a flag that fetches each message in full, would save callers the loop — kept out for now so the request count stays visible at the call site.
 - 🗨 `create_event` / `update_event` swallow nothing — an `HttpError` propagates. `delete_event` catches and logs. Pick one policy and apply it across the board.
 - 🗨 Add pagination to `get_calendar_events_by_date`; it currently ignores `nextPageToken`.
 
@@ -29,6 +32,9 @@ A small todo list local to the project. Legend: ⭐ done | 🗨 suggestion | ⚠
 - ⭐ `MailDraft.__init__` read `self.id` before it was assigned; `id` is now pulled first.
 - ⭐ `EventsDraft.transparency` was `= Literal[...]` (an assignment holding a typing object) instead of an annotation. Now typed against `EventTransparencyEnum`.
 - ⭐ Dropped the `Resource, dict` dual inheritance from the data models.
+- ⭐ Converted every data model attribute to snake_case, with `to_snake_case()` / `to_camel_case()` doing the translation at the wire boundary. The models `setattr` straight off the response, so Google's casing used to become ours by accident. `_KEY_ALIASES` on `EventsDraft` is gone — the conversion covers what it hand-mapped.
+- 🗨 `_IRREGULAR_FIELDS` is a readability map, not a correctness one — the rule round trips `iCalUID` fine, just as the unreadable `i_cal_u_i_d`. Add a pair there for anything else that reads badly. The two shapes the rule genuinely cannot round trip are a key starting with a capital and a key that already contains an underscore; none of Calendar v3, Gmail v1 or Keep v1 sends either, so this is a latent edge rather than a live one.
+- 🗨 The round-trip invariant (`to_camel_case(to_snake_case(key)) == key` across the whole known field set) is checked by hand right now. It wants to be the first thing in the test suite — it is the one property that, if it breaks, silently drops fields from request bodies.
 - 🗨 `Events` has no `from_draft()` helper — round-tripping a draft into an Event is manual.
 - 🗨 `MailMessagePart.parts` nests but nothing walks it; a `flatten()` / `get_part(mime_type=...)` helper would save callers the recursion.
 

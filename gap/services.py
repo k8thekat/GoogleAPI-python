@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Self, Union
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials as Credentials_oa
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -49,9 +50,11 @@ from .modules import (
     MailDraft,
     MailDraftList,
     MailMessage,
+    MailMessageList,
     MailUserLabel,
     MailUserProfile,
     MailUserResource,
+    to_snake_case,
 )
 
 if TYPE_CHECKING:
@@ -332,8 +335,18 @@ class GoogleService:
         # A stale token we can renew without bothering the user.
         if creds is not None and creds.expired and creds.refresh_token:
             LOGGER.info("<%s> | Refreshing the expired token at %s.", type(self).__name__, token_file)
-            creds.refresh(request=Request())
+            try:
+                creds.refresh(request=Request())
+            except RefreshError as e:
+                # Revoked, or cached against a different set of SCOPES than we now ask for
+                # — Google rejects the renewal either way. Fall through to the browser
+                # rather than making the user work out that the token file needs deleting.
+                LOGGER.warning("<%s> | Could not renew %s, re-authorizing. | %s", type(self).__name__, token_file, e)
+                creds = None
         else:
+            creds = None
+
+        if creds is None:
             # No usable token — send the user through the browser login.
             LOGGER.info("<%s> | No valid token found, starting the local authorization flow.", type(self).__name__)
             flow: InstalledAppFlow = InstalledAppFlow.from_client_secrets_file(
@@ -607,7 +620,7 @@ class CalendarService(GoogleService):
             temp.extend(res.events)
 
             # No token means that was the last page — break regardless of what we got.
-            page_token = res.nextPageToken
+            page_token = res.next_page_token
             if not page_token:
                 break
         return temp
@@ -681,9 +694,12 @@ class CalendarService(GoogleService):
 
         """
         event: Events = self.get_event(event_id=old_event.id, calendar_id=old_event.calendar_id)
+        # `changes` is the API's camelCase shape either way — `to_dict()` builds a request
+        # body, and `EventsDraftTyped` mirrors one. Our attributes are snake_case, so
+        # convert before applying or we set a shadow field the update body then dupes.
         changes: dict[str, Any] = event_draft.to_dict() if isinstance(event_draft, EventsDraft) else dict(event_draft)
         for key, value in changes.items():
-            setattr(event, key, value)
+            setattr(event, to_snake_case(key), value)
 
         temp: HttpRequest = self.service.events().update(
             calendarId=event.calendar_id,
@@ -712,9 +728,17 @@ class MailService(GoogleService):
     service_name: ClassVar[str] = "gmail"
     service_version: ClassVar[str] = "v1"
     token_name: ClassVar[str] = "mail_token.json"
-    SCOPES: ClassVar[list[str]] = ["https://mail.google.com/"]
+    # Read plus draft/send, which is everything the methods below touch. This used to be
+    # `https://mail.google.com/` — full mailbox control, delete included — which is far
+    # more than we need to hand an application.
+    SCOPES: ClassVar[list[str]] = [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+    ]
     # `mail_client_secret.json` is the name older setups used; still honored first.
     secret_names: ClassVar[tuple[str, ...]] = ("mail_client_secret.json", "client_secret.json")
+    # The `maxResults` ceiling the messages/drafts list endpoints enforce.
+    MAX_RESULTS: ClassVar[int] = 500
 
     LABELS: list[LabelID]
 
@@ -752,11 +776,114 @@ class MailService(GoogleService):
         temp: dict[str, Any] = self.service.users().labels().list(userId=user_id).execute()
         res: list[MailUserLabel] = [MailUserLabel(**label) for label in temp.get("labels", [])]
 
-        labels: list[LabelID] = getattr(self, "LABELS", [])
-        labels.extend({"name": label.name, "id": label.id} for label in res)
+        # Replace rather than extend — this mirrors the last response, and appending to it
+        # gave us every label twice on the second call.
         # Uppercase because it is part of our public surface, but it is a per-instance
         # cache rather than a constant — pyright reads the casing as the latter.
-        self.LABELS = labels  # pyright: ignore[reportConstantRedefinition]
+        self.LABELS = [{"name": label.name, "id": label.id} for label in res]  # pyright: ignore[reportConstantRedefinition]
+        return res
+
+    def search_messages(
+        self,
+        query: str = "",
+        label_ids: Union[list[str], None] = None,
+        max_results: int = 100,
+        page_token: Union[str, None] = None,
+        include_spam_trash: bool = False,
+        user_id: str = "me",
+    ) -> MailMessageList:
+        """Search the mailbox, using the same query syntax as the Gmail search bar.
+
+        This is one page of results. The response only carries `id`/`threadId` stubs, so
+        pass each `id` to :meth:`get_message` for the message itself. To walk the whole
+        result set, feed the returned `nextPageToken` back in as `page_token` until it
+        comes back None.
+
+        https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list
+
+        Parameters
+        -----------
+        query: :class:`str`, optional
+            A Gmail search query, e.g. "from:billing@example.com has:attachment",
+            by default "" — every message.
+        label_ids: list[:class:`str`] | None, optional
+            Only match messages carrying all of these Label IDs, by default None.
+            IDs, not names — see :meth:`get_labels` or the `LABELS` cache.
+        max_results: :class:`int`, optional
+            How many results to return on this page, by default 100.
+        page_token: :class:`str` | None, optional
+            The `nextPageToken` of a previous call, by default None — the first page.
+        include_spam_trash: :class:`bool`, optional
+            Whether to search SPAM and TRASH as well, by default False.
+        user_id: :class:`str`, optional
+            The ID of the Google Account, by default "me".
+
+        Returns
+        --------
+        :class:`MailMessageList`
+            The matching message stubs plus any continuation token.
+
+        Raises
+        -------
+        :exc:`ValueError`
+            If `max_results` is outside the range the API accepts.
+
+        """
+        if not 1 <= max_results <= self.MAX_RESULTS:
+            raise ValueError(f"Your max_results must be between 1 and {self.MAX_RESULTS}. | Value: {max_results}")
+
+        # Only send the optional filters we were actually given; an empty `labelIds` is
+        # not the same request as no `labelIds` at all.
+        params: dict[str, Any] = {
+            "userId": user_id,
+            "q": query,
+            "maxResults": max_results,
+            "includeSpamTrash": include_spam_trash,
+        }
+        if label_ids:
+            params["labelIds"] = label_ids
+        if page_token is not None:
+            params["pageToken"] = page_token
+
+        temp: HttpRequest = self.service.users().messages().list(**params)
+        return MailMessageList(**temp.execute())
+
+    def get_message(
+        self,
+        message_id: str,
+        message_format: Union[MailFormatEnum, str, None] = None,
+        user_id: str = "me",
+    ) -> Union[MailMessage, None]:
+        """Get a single message from the mailbox.
+
+        https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/get
+
+        Parameters
+        -----------
+        message_id: :class:`str`
+            The ID of the message to fetch; this is the :attr:`MailMessage.id` attribute
+            off a :meth:`search_messages` result.
+        message_format: :class:`MailFormatEnum` | :class:`str` | None, optional
+            How much of the message to return, by default None — the API's own default.
+            Use `MailFormatEnum.full` if you want the parsed headers and body parts.
+        user_id: :class:`str`, optional
+            The ID of the Google Account, by default "me".
+
+        Returns
+        --------
+        :class:`MailMessage` | None
+            The message, or None if the request failed.
+
+        """
+        try:
+            if message_format is None:
+                temp: HttpRequest = self.service.users().messages().get(userId=user_id, id=message_id)
+            else:
+                temp = self.service.users().messages().get(userId=user_id, id=message_id, format=message_format)
+            res = MailMessage(**temp.execute())
+        except HttpError as e:
+            LOGGER.warning("<%s.get_message> | Failed to get the message %s. | %s", type(self).__name__, message_id, e)
+            return None
         return res
 
     def create_draft(self, body: MailMessage, user_id: str = "me") -> MailDraft:
@@ -970,7 +1097,7 @@ class KeepService(GoogleService):
         note_filter: :class:`str`, optional
             A Keep API filter expression, by default "trashed=false".
         page_token: :class:`str` | None, optional
-            A continuation token from a previous :attr:`KeepNoteList.nextPageToken`, by default None.
+            A continuation token from a previous :attr:`KeepNoteList.next_page_token`, by default None.
 
         Returns
         --------
