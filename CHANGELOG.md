@@ -1,5 +1,49 @@
 # Changelog
 
+## 5.0.0
+
+> ⚠️ **Breaking release**, and still `development` — not yet fully tested against a live
+> account. The consumer Keep support in particular has only been exercised against canned
+> payloads; the auth path has never made a real request.
+
+### Added
+
+- **`KeepServicePersonal`** — Google Keep for a consumer `@gmail.com` account, via the
+  private Android `notes/v1/changes` endpoint. This is a different API to
+  `keep.googleapis.com`: one endpoint, master token auth, and a delta sync rather than
+  REST resources, so it is deliberately NOT a `GoogleService` subclass. `KeepService`
+  (Workspace) is unchanged and unaffected.
+- New models for it: `KeepBasePersonal`, `KeepNotePersonal`, `KeepChecklistPersonal`,
+  `KeepItemPersonal`, `KeepSubItemPersonal`, and the `KeepItemsPersonal` collection.
+  Every part registers itself with the service and queues its own edits; construction is
+  an identity map, so a given id is one object for the life of the session.
+- `KeepTypeEnum`, and the wire shapes in `_types.py` — `NotePersonalResponse`,
+  `NotePersonalTyped`, `ItemPersonalTyped`, `BlobPersonalTyped` and friends. The part
+  shapes are a discriminated union on `type`, so the build path narrows without a cast.
+- `KeepServicePersonal.dump_state()` — writes every part's raw payload and the sync cursor
+  to disk, for recovery and for diffing against a real capture.
+- `KeepSyncError`.
+- An optional extra: `pip install gap[personal]` pulls `gpsoauth`. Without it `gap` still
+  imports cleanly and only `KeepServicePersonal` refuses to construct.
+
+### Breaking
+
+- **Dependencies moved from `requirements.txt` into `pyproject.toml`, and are floors
+  rather than pins.** `==` on a library makes it un-installable next to anything wanting a
+  different `google-api-python-client`. `requirements.txt` is gone; use
+  `uv pip install -e .` or `-e .[personal]`.
+- Dependency floors raised: `google-api-python-client>=2.198.0`,
+  `google-auth-oauthlib>=1.4.0`, **`protobuf>=7.35.1` (major, was 6.30.2)**,
+  `requests>=2.34.2`. `requests` is now declared rather than relied on transitively — it
+  is imported at module scope by `services.py`.
+
+### Notes
+
+- Blob/attachment parts are parsed but not modelled; `from_raw` returns `None` for them.
+- Removing an entry from a checklist marks it `deleted` on the wire. It has to: a `LIST`
+  payload carries no array of its children, so a removal the server is never told about
+  simply returns on the next sync.
+
 ## 4.0.0
 
 > ⚠️ **Breaking release.** See "Migrating from 3.x" at the bottom.

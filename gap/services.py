@@ -21,11 +21,23 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
 
 from __future__ import annotations
 
+import json
 import logging
 from configparser import ConfigParser
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from pathlib import Path
+from random import randrange
 from typing import TYPE_CHECKING, Any, ClassVar, Self, Union
+
+import requests
+
+# Optional: only `KeepServicePersonal` needs it, and it is not a dependency of the
+# package. Guarded so importing `gap` still works without the extra installed.
+try:
+    import gpsoauth  # pyright: ignore[reportMissingImports]
+except ImportError:  # pragma: no cover - exercised only without the extra.
+    gpsoauth = None  # type: ignore[assignment]
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -43,10 +55,13 @@ from .modules import (
     Events,
     EventsDraft,
     EventsList,
+    KeepBasePersonal,
+    KeepItemsPersonal,
     KeepNote,
     KeepNoteDraft,
     KeepNoteList,
     KeepResource,
+    KeepSubItemPersonal,
     MailDraft,
     MailDraftList,
     MailMessage,
@@ -54,6 +69,7 @@ from .modules import (
     MailUserLabel,
     MailUserProfile,
     MailUserResource,
+    keep_now,
     to_snake_case,
 )
 
@@ -62,12 +78,14 @@ if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
     from ._enums import LocalTimeZoneEnum
-    from ._types import EventsDraftTyped, LabelID
+    from ._types import EventsDraftTyped, LabelID, NotePersonalPartsTyped, NotePersonalResponse
 
 __all__ = (
     "CalendarService",
     "GoogleService",
     "KeepService",
+    "KeepServicePersonal",
+    "KeepSyncError",
     "MailService",
     "ini_load",
     "ini_load_calendars",
@@ -1139,3 +1157,408 @@ class KeepService(GoogleService):
     def _as_resource_name(name: str) -> str:
         """Normalize a bare note ID into the "notes/xxxx" resource name the API wants."""
         return name if name.startswith("notes/") else f"notes/{name}"
+
+
+# ---------------------------------------------------------------------------
+# Consumer Keep.
+#
+# A different API to `keep.googleapis.com` entirely: one endpoint, master token auth via
+# Android's protocol, and a delta sync rather than REST resources. It shares nothing with
+# `KeepService` above, which is why it is not a `GoogleService`.
+# ---------------------------------------------------------------------------
+
+#: The only endpoint. Every operation is a delta exchange against it.
+KEEP_CHANGES_URL: str = "https://www.googleapis.com/notes/v1/changes"
+
+#: The `parentId` a top level note carries.
+KEEP_ROOT: str = "root"
+
+#: What the Android Keep client identifies itself as when minting an access token.
+KEEP_OAUTH_SCOPES: str = "oauth2:https://www.googleapis.com/auth/memento https://www.googleapis.com/auth/reminders"
+KEEP_ANDROID_APP: str = "com.google.android.keep"
+KEEP_CLIENT_SIG: str = "38918a453d07199354f8b19af05ec6562ced5788"
+
+#: Identifies the client to Google's Android auth endpoint. Must stay constant across
+#: exchanges — the master token is bound to it, and a new value registers a new device.
+ANDROID_ID: str = "0123456789abcdef"
+
+#: Opaque server feature gates. Send verbatim; pruning them changes what comes back.
+CAPABILITIES: tuple[str, ...] = ("NC", "PI", "LB", "AN", "SH", "DR", "TR", "IN", "SNB", "MI", "CO")
+
+#: Neither `requests` nor `httplib2` sets a timeout by default, so a half open connection
+#: blocks forever with no error to catch. Overridable per call via `sync(timeout=...)`.
+REQUEST_TIMEOUT: float = 30.0
+
+
+class KeepSyncError(Exception):
+    """Raised when a `changes` exchange fails. The graph is left untouched."""
+
+
+class KeepServicePersonal:
+    """Google Keep for a consumer `@gmail.com` account.
+
+    Deliberately NOT a :class:`GoogleService` subclass — this speaks Android master token
+    auth against the consumer backend, so none of that credential handling applies. See
+    :class:`KeepService` for the Workspace API.
+
+    Synchronous, like the rest of the package; wrap calls in `asyncio.to_thread` from
+    async code.
+
+    Parameters
+    -----------
+    email: :class:`str`
+        The account address.
+    master_token: :class:`str`
+        From :meth:`exchange_token`. See the warning below.
+    queue_interval: :class:`float` | None, optional
+        Seconds between flushes of the edit queue, by default `QUEUE_INTERVAL`.
+
+    Warnings
+    ---------
+    A master token is an *account* credential, not a scoped one — it is exchangeable for
+    tokens to any Google service on the account. Keep it in a secrets store, never beside
+    `client_secret.json`.
+
+    """
+
+    #: Seconds between edit queue flushes. Mutable per instance.
+    QUEUE_INTERVAL: ClassVar[float] = 1.0
+
+    def __init__(self, email: str, master_token: str, queue_interval: Union[float, None] = None) -> None:
+        # Fail here rather than on the first sync — the missing dependency is a packaging
+        # problem, and surfacing it at construction keeps it out of the request path.
+        if gpsoauth is None:
+            raise KeepSyncError(f"{type(self).__name__} needs the `personal` extra: pip install gap[personal]")
+
+        self.email: str = email
+        self.queue_interval: float = self.QUEUE_INTERVAL if queue_interval is None else queue_interval
+
+        self._master_token: str = master_token
+        self._access_token: Union[str, None] = None
+        self._version: Union[str, None] = None
+        # Identifies this client session to the server; not a secret and never used for auth.
+        session_suffix: int = randrange(1000000000, 9999999999)  # noqa: S311
+        self._session_id: str = f"s--{int(datetime.now(tz=UTC).timestamp() * 1000)}--{session_suffix}"
+
+        #: Every part that exists, keyed by id. See `KeepBasePersonal.__post_init__`.
+        self._parts: dict[str, KeepBasePersonal] = {}
+        #: Parts with unsent edits, keyed by id so repeated edits coalesce into one entry.
+        self._queued: dict[str, KeepBasePersonal] = {}
+        #: The current fold's entries, collapsed by id. Parts read their own children out
+        #: of this while building; empty at every other moment.
+        self._pending: dict[str, NotePersonalPartsTyped] = {}
+        #: True while folding a server response. Changes arriving FROM the server are not
+        #: edits, and queueing them would send the whole graph straight back.
+        self._applying: bool = False
+
+    @classmethod
+    def exchange_token(cls, email: str, oauth_token: str, android_id: str = ANDROID_ID) -> dict[str, str]:
+        """Exchange a browser `oauth_token` cookie for a long lived master token.
+
+        Sign in at https://accounts.google.com/EmbeddedSetup, click "I agree" — the page
+        then hangs, which is expected — and read the `oauth_token` cookie. It starts with
+        `oauth2_4/` and is single use.
+
+        Parameters
+        -----------
+        email: :class:`str`
+            The account address the token is minted for.
+        oauth_token: :class:`str`
+            The single use `oauth_token` cookie from the EmbeddedSetup flow.
+        android_id: :class:`str`, optional
+            The device identifier bound to the resulting token, by default ANDROID_ID.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`str`]
+            The raw gpsoauth response. The master token is under `"Token"`; on failure the
+            dict carries Google's diagnostics in its place.
+
+        """
+        if gpsoauth is None:
+            raise KeepSyncError(f"{cls.__name__}.exchange_token needs the `personal` extra: pip install gap[personal]")
+
+        response: dict[str, str] = gpsoauth.exchange_token(email, oauth_token, android_id)
+        # Only logged on the failure branch — a successful response holds the token.
+        if "Token" not in response:
+            LOGGER.warning("<%s.exchange_token> | No master token in response. | %s", cls.__name__, response)
+        return response
+
+    @property
+    def version(self) -> Union[str, None]:
+        """The sync cursor. `None` is a cold start — the key is omitted, not nulled."""
+        return self._version
+
+    @version.setter
+    def version(self, value: Union[str, None]) -> None:
+        # "" is not a documented value for `targetVersion`; collapse it so exactly one
+        # thing means "I know nothing" and the payload builder has a single case to test.
+        self._version = value or None
+
+    def __enter__(self) -> Self:
+        self.sync()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Flush on the way out. Errors propagate — a failed sync must not look clean."""
+        self.sync()
+
+    # -----------------------------------------------------------------------
+    # Part bookkeeping. The models call these; callers should not need to.
+    # -----------------------------------------------------------------------
+    def get_part(self, part_id: str) -> Union[KeepBasePersonal, None]:
+        """Look a part up by id. Local only — never a request."""
+        return self._parts.get(part_id)
+
+    def register_part(self, part: KeepBasePersonal) -> None:
+        """Put a part in the id map so an incoming change can find it.
+
+        Raises
+        -------
+        :exc:`ValueError`
+            If a different object is already registered under that id — always a bug, and
+            overwriting would orphan whatever was there.
+
+        """
+        existing: Union[KeepBasePersonal, None] = self._parts.get(part.id)
+        if existing is not None and existing is not part:
+            raise ValueError(f"{part.id} is already registered to a different {type(existing).__name__}.")
+        self._parts[part.id] = part
+
+    def queue_part(self, part: KeepBasePersonal) -> None:
+        """Mark a part as having unsent edits. Keyed by id, so repeats coalesce.
+
+        Ignored while a server response is being folded in — see `_applying`.
+        """
+        if self._applying is True:
+            return
+        self._queued[part.id] = part
+
+    def dump_state(self, path: Path) -> None:
+        """Write every part's raw payload and the cursor to disk.
+
+        For recovery, and for checking the shapes this module assumes against a real
+        response — dump after a cold start and you have ground truth.
+
+        Parameters
+        -----------
+        path: :class:`Path`
+            The file to write. Overwritten if it exists.
+
+        """
+        state: dict[str, Any] = {
+            "email": self.email,
+            "version": self._version,
+            "parts": {part_id: part.raw for part_id, part in self._parts.items()},
+        }
+        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        LOGGER.info("<%s.dump_state> | Wrote %s parts. | %s", type(self).__name__, len(self._parts), path)
+
+    # -----------------------------------------------------------------------
+    # Sync.
+    # -----------------------------------------------------------------------
+    def sync(self, **params: Any) -> None:
+        """Exchange queued edits with the server and fold the response into the graph.
+
+        Runs until the server stops setting `truncated`. Nothing is applied and the cursor
+        does not move until every page is in hand, so a failure part way through leaves
+        the graph exactly as it was — and the queue intact, so the next call retries.
+
+        Parameters
+        -----------
+        **params: :class:`Any`
+            Forwarded to :meth:`_post`, and from there to `requests.post` — `timeout`,
+            `proxies`, and so on. `timeout` defaults to `REQUEST_TIMEOUT`.
+
+        Raises
+        -------
+        :exc:`KeepSyncError`
+            If any request in the exchange fails. The graph is untouched and the queued
+            edits are still queued.
+
+        """
+        # Edits ride the first request only; later pages are pure reads.
+        outbound: list[dict[str, Any]] = [part.to_dict() for part in self._queued.values()]
+        pages: list[NotePersonalPartsTyped] = []
+        # Local until the whole exchange succeeds. Committing per page would advance the
+        # cursor past changes that were never applied, and they are never sent again.
+        version: Union[str, None] = self._version
+
+        while True:
+            try:
+                response: NotePersonalResponse = self._post(nodes=outbound, version=version, **params)
+            except Exception as e:
+                LOGGER.exception("<%s.sync> | Exchange failed; graph and queue untouched. | %s", type(self).__name__, self.email)
+                raise KeepSyncError(f"Sync failed for {self.email}.") from e
+
+            outbound = []
+
+            if response.get("forceFullResync") is True:
+                # Our cursor is unusable. Drop it and start over from cold — the queue is
+                # still full, so the pending edits go out again on the retry.
+                LOGGER.warning("<%s.sync> | Full resync demanded; restarting cold. | %s", type(self).__name__, self.email)
+                self.version = None
+                self.sync(**params)
+                return
+
+            pages.extend(response.get("nodes", []))
+            version = response.get("toVersion", version)
+
+            if response.get("truncated") is not True:
+                break
+
+        # Commit — graph, then cursor, then queue. Only reached on a clean exchange.
+        self._build_parts(raws=pages)
+        self.version = version
+        self._queued.clear()
+
+    def _post(self, nodes: list[dict[str, Any]], version: Union[str, None], **params: Any) -> NotePersonalResponse:
+        """Send one `changes` request, refreshing the access token if it has expired.
+
+        Parameters
+        -----------
+        nodes: list[dict[:class:`str`, :class:`Any`]]
+            The parts being sent. Empty for a read.
+        version: :class:`str` | None
+            The cursor. `None` omits `targetVersion` entirely, which is a cold start.
+        **params: :class:`Any`
+            Passed through to `requests.post`.
+
+        Returns
+        --------
+        :class:`NotePersonalResponse`
+            The decoded response body.
+
+        """
+        params.setdefault("timeout", REQUEST_TIMEOUT)
+        if self._access_token is None:
+            self._refresh_access_token()
+
+        payload: dict[str, Any] = self._build_payload(nodes=nodes, version=version)
+        response: requests.Response = requests.post(KEEP_CHANGES_URL, json=payload, headers=self._headers(), **params)  # noqa: S113
+
+        # One retry, and only for an expired token — anything else is a real failure.
+        if response.status_code == HTTPStatus.UNAUTHORIZED:
+            LOGGER.info("<%s._post> | Access token expired; refreshing. | %s", type(self).__name__, self.email)
+            self._refresh_access_token()
+            response = requests.post(KEEP_CHANGES_URL, json=payload, headers=self._headers(), **params)  # noqa: S113
+
+        response.raise_for_status()
+        return response.json()
+
+    def _headers(self) -> dict[str, str]:
+        """The auth header. Note the scheme is "OAuth", not "Bearer"."""
+        return {"Authorization": f"OAuth {self._access_token}"}
+
+    def _refresh_access_token(self) -> None:
+        """Mint a short lived access token from the master token.
+
+        Raises
+        -------
+        :exc:`KeepSyncError`
+            If Google returns no `Auth` value.
+
+        """
+        # `__init__` already refused construction without it; this is here so the type
+        # checker can narrow the module level Optional, which it cannot do across methods.
+        if gpsoauth is None:  # pragma: no cover - unreachable via __init__.
+            raise KeepSyncError(f"{type(self).__name__} needs the `personal` extra: pip install gap[personal]")
+
+        response: dict[str, str] = gpsoauth.perform_oauth(
+            self.email,
+            self._master_token,
+            ANDROID_ID,
+            service=KEEP_OAUTH_SCOPES,
+            app=KEEP_ANDROID_APP,
+            client_sig=KEEP_CLIENT_SIG,
+        )
+        token: Union[str, None] = response.get("Auth")
+        if token is None:
+            raise KeepSyncError(f"No access token in the auth response for {self.email}. | {response}")
+        self._access_token = token
+
+    def _build_payload(self, nodes: list[dict[str, Any]], version: Union[str, None]) -> dict[str, Any]:
+        """Build the `changes` request envelope."""
+        payload: dict[str, Any] = {
+            "nodes": nodes,
+            "clientTimestamp": keep_now(),
+            "requestHeader": {
+                "clientSessionId": self._session_id,
+                "clientPlatform": "ANDROID",
+                "clientVersion": {"major": "9", "minor": "9", "build": "9", "revision": "9"},
+                "capabilities": [{"type": capability} for capability in CAPABILITIES],
+            },
+        }
+        # Omitted entirely on a cold start. An absent key is not the same as a null one.
+        if version is not None:
+            payload["targetVersion"] = version
+        return payload
+
+    # -----------------------------------------------------------------------
+    # Building.
+    # -----------------------------------------------------------------------
+    def pending_children(self, parent_id: str) -> list[NotePersonalPartsTyped]:
+        """Entries in the current fold belonging to `parent_id` and not nested under another."""
+        return [raw for raw in self._pending.values() if raw.get("parentId") == parent_id and raw.get("superListItemId") is None]
+
+    def pending_sub_items(self, item_id: str) -> list[NotePersonalPartsTyped]:
+        """Entries in the current fold nested under `item_id`."""
+        return [raw for raw in self._pending.values() if raw.get("superListItemId") == item_id]
+
+    def _build_parts(self, raws: list[NotePersonalPartsTyped]) -> None:
+        """Fold a whole exchange's worth of entries into the graph.
+
+        The pages are collapsed into one dict keyed by id first, so ordering stops
+        mattering — a later page wins, and every entry is reachable before anything is
+        built. Only top level entries are constructed here: `parentId == "root"` is what
+        identifies them, and each one builds its own children out of `_pending`, exactly
+        as :class:`MailMessagePart` recurses into its own `parts`.
+        """
+        self._pending = {raw["id"]: raw for raw in raws}
+        self._applying = True
+        try:
+            for raw in list(self._pending.values()):
+                if raw.get("parentId") != KEEP_ROOT:
+                    continue
+                existing: Union[KeepBasePersonal, None] = self._parts.get(raw["id"])
+                if existing is not None:
+                    existing.update(raw=raw)
+                    continue
+                KeepBasePersonal.from_raw(raw=raw, service=self)
+            self._update_orphans()
+        finally:
+            self._applying = False
+            self._pending = {}
+
+    def _update_orphans(self) -> None:
+        """Apply entries whose owner was not a root in this payload.
+
+        An incremental delta often carries a single item with no note beside it; the owner
+        is already in `_parts` from an earlier sync, so the entry takes its update in place.
+
+        An entry whose owner cannot be found anywhere is DISCARDED — without a parent it
+        cannot be displayed or related to anything, so tracking it only grows the map with
+        data we can never use.
+        """
+        for raw in self._pending.values():
+            if raw.get("parentId") == KEEP_ROOT:
+                continue
+            existing: Union[KeepBasePersonal, None] = self._parts.get(raw["id"])
+            if existing is not None:
+                existing.update(raw=raw)
+                continue
+            owner: Union[KeepBasePersonal, None] = self._parts.get(raw.get("superListItemId") or raw.get("parentId", ""))
+            if owner is None:
+                LOGGER.debug("<%s._update_orphans> | Discarding %s; no owner found.", type(self).__name__, raw["id"])
+                self._parts.pop(raw["id"], None)
+                continue
+            child: Union[KeepBasePersonal, None] = KeepBasePersonal.from_raw(raw=raw, service=self)
+            if child is None:
+                continue
+            collection: Union[KeepItemsPersonal[Any], None] = getattr(
+                owner,
+                "sub_items" if isinstance(child, KeepSubItemPersonal) else "items",
+                None,
+            )
+            if collection is not None and child not in collection:
+                collection.append(child)

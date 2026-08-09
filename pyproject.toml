@@ -4,13 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gap"
-dynamic = ["version", "dependencies"]
+dynamic = ["version"]
 authors = [
     { name = "k8thekat", email = "Cadwalladerkatelynn@gmail.com" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 description = "A Python wrapper for the Google API."
 requires-python = ">=3.12.0"
+# Floors, not pins. `gap` is a library: an `==` here makes it un-installable alongside
+# anything else that wants a different google-api-python-client.
+dependencies = [
+    "google-api-python-client>=2.198.0",
+    "google-auth-oauthlib>=1.4.0",
+    "protobuf>=7.35.1",
+    # Imported at module scope by `services.py`. Present transitively via
+    # google-auth-oauthlib -> requests-oauthlib, but declared because we import it.
+    "requests>=2.34.2",
+]
 license = { file = "LICENSE" }
 # PyPi Classifiers.
 # https://pypi.org/classifiers/
@@ -28,12 +38,23 @@ classifiers = [
 ]
 keywords = ["google", "api", "calendar", "gmail", "keep"]
 
+[project.optional-dependencies]
+# Consumer Keep support (`KeepServicePersonal`) only. It authenticates against Google's
+# private Android endpoint with a master token, which none of the official libraries do —
+# so the dependency stays out of the base install for the majority who only want the
+# Calendar, Gmail and Workspace Keep services.
+#
+#   pip install gap[personal]
+#
+# Without it `gap` still imports cleanly; constructing `KeepServicePersonal` and calling
+# `exchange_token` raise `KeepSyncError` telling you to install the extra.
+personal = ["gpsoauth>=2.0.0"]
+
 [project.urls]
 GitHub = "https://github.com/k8thekat/GoogleAPI-python"
 Issues = "https://github.com/k8thekat/GoogleAPI-python/issues"
 
 [tool.setuptools.dynamic]
-dependencies = { file = "requirements.txt" }
 version = { attr = "gap.__version__" }
 
 [tool.setuptools]

@@ -21,13 +21,14 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Required, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Required, TypedDict, Union
 
 if TYPE_CHECKING:
     from ._enums import (
         CalendarColorEnum,
         EventTransparencyEnum,
         EventTypeEnum,
+        KeepTypeEnum,
         LocalTimeZoneEnum,
         MailLabelColorEnum,
         MailLabelListVisiblityEnum,
@@ -36,17 +37,25 @@ if TYPE_CHECKING:
     )
 
 __all__ = (
+    "BlobPersonalTyped",
     "CalendarID",
     "EventListsTyped",
     "EventTimeTyped",
     "EventUserTyped",
     "EventsDraftTyped",
     "EventsTyped",
+    "ItemPersonalTyped",
     "KeepNoteBodyTyped",
     "KeepNoteListTyped",
     "KeepNoteTyped",
     "LabelID",
     "MailLabelTyped",
+    "NotePersonalLabelTyped",
+    "NotePersonalPartTyped",
+    "NotePersonalPartsTyped",
+    "NotePersonalResponse",
+    "NotePersonalTimestampsTyped",
+    "NotePersonalTyped",
     "ReminderOverridesTyped",
     "RemindersTyped",
 )
@@ -242,3 +251,103 @@ class KeepNoteListTyped(TypedDict, total=False):
 
     notes: list[KeepNoteTyped]
     nextPageToken: str
+
+
+# ---------------------------------------------------------------------------
+# Consumer Keep — the `changes` endpoint.
+#
+# These are the shapes `KeepServicePersonal` sees, and they share nothing with the
+# Workspace `KeepNote*Typed` above. Every entry in the `nodes` array is one of the three
+# part shapes below, flat, related only by `parentId`.
+# ---------------------------------------------------------------------------
+class NotePersonalTimestampsTyped(TypedDict, total=False):
+    """The timestamp block carried by every part.
+
+    `trashed` and `deleted` are always present, set to the epoch when false — which is
+    why both read as a comparison rather than a null check.
+    """
+
+    kind: str
+    created: str
+    updated: str
+    trashed: str
+    deleted: str
+    userEdited: str
+
+
+class NotePersonalLabelTyped(TypedDict, total=False):
+    """One label reference on a note.
+
+    A removed label stays in the array with a real `deleted` timestamp rather than being
+    dropped — that tombstone is how the removal propagates.
+    """
+
+    labelId: str
+    deleted: str
+
+
+class NotePersonalPartTyped(TypedDict, total=False):
+    """What every entry in the `nodes` array carries, whatever its kind.
+
+    Deliberately does NOT declare `type`. That key is the discriminator the two concrete
+    shapes below narrow on, and a TypedDict subclass may not re-declare an inherited key
+    with a narrower type — pyright rejects it as an incompatible variable override. Left
+    off the base, each subclass is free to pin it to its own `Literal`.
+    """
+
+    id: Required[str]
+    kind: str
+    parentId: str
+    serverId: str
+    sortValue: str
+    baseVersion: str
+    text: str
+    timestamps: NotePersonalTimestampsTyped
+    nodeSettings: dict[str, str]
+    annotationsGroup: dict[str, Any]
+
+
+class NotePersonalTyped(NotePersonalPartTyped, total=False):
+    """A top level entry — `parentId` is "root". Covers both a note and a checklist."""
+
+    # Required so the key can be read without a `reportTypedDictNotRequiredAccess` guard;
+    # the server always sends it.
+    type: Required[Literal[KeepTypeEnum.note, KeepTypeEnum.checklist]]
+    title: str
+    color: str
+    isArchived: bool
+    isPinned: bool
+    labelIds: list[NotePersonalLabelTyped]
+    collaborators: list[dict[str, Any]]
+    shareRequests: list[dict[str, Any]]
+
+
+class ItemPersonalTyped(NotePersonalPartTyped, total=False):
+    """An entry belonging to a checklist, or nested under another entry."""
+
+    type: Required[Literal[KeepTypeEnum.item]]
+    checked: bool
+    parentServerId: str
+    superListItemId: str
+
+
+class BlobPersonalTyped(NotePersonalPartTyped, total=False):
+    """An attachment — image, drawing or audio. Hangs off a note by `parentId`."""
+
+    type: Required[Literal[KeepTypeEnum.blob]]
+    blob: dict[str, Any]
+
+
+#: One entry of the `nodes` array. Discriminated on `type`, so `raw["type"] is
+#: KeepTypeEnum.item` narrows to `ItemPersonalTyped` with no cast.
+NotePersonalPartsTyped = Union[NotePersonalTyped, ItemPersonalTyped, BlobPersonalTyped]
+
+
+class NotePersonalResponse(TypedDict, total=False):
+    """The response body of a `changes` request."""
+
+    nodes: list[NotePersonalPartsTyped]
+    toVersion: str
+    truncated: bool
+    forceFullResync: bool
+    upgradeRecommended: bool

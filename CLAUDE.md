@@ -10,7 +10,8 @@ blocking. Callers who need async should wrap calls in `asyncio.to_thread`.
 
 ## Tooling
 
-- **Package manager:** `uv`. Use `uv sync` / `uv pip install -r requirements.txt`.
+- **Package manager:** `uv`. Use `uv sync`, or `uv pip install -e .` / `-e .[personal]`.
+  Dependencies live in `pyproject.toml`; there is no `requirements.txt`.
 - **Build backend:** `setuptools>=61`, dynamic version pulled from `gap.__version__`.
   Run `build.bash` — it verifies the VENV and the `__init__.py` version before tagging.
 - **Type checking:** Pyright **strict**, Python 3.12, venv pinned to `./.venv`.

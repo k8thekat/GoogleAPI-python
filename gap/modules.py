@@ -35,19 +35,23 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Callable, MutableSequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, ClassVar, Union
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, Union
 
 from googleapiclient.discovery import Resource
 
-from ._enums import CalendarColorEnum, EventTransparencyEnum, EventTypeEnum
+from ._enums import CalendarColorEnum, EventTransparencyEnum, EventTypeEnum, KeepTypeEnum
 
 if TYPE_CHECKING:
     from googleapiclient.http import HttpRequest
 
     from ._enums import LocalTimeZoneEnum, MailLabelColorEnum, MailLabelListVisiblityEnum, MailMessageListVisibilityEnum, MailTypeEnum
-    from ._types import EventsDraftTyped, EventTimeTyped, EventUserTyped, RemindersTyped
+    from ._types import EventsDraftTyped, EventTimeTyped, EventUserTyped, NotePersonalPartsTyped, RemindersTyped
+    from .services import KeepServicePersonal
 
 __all__ = (
     "CalendarList",
@@ -58,10 +62,16 @@ __all__ = (
     "EventsDraft",
     "EventsList",
     "EventsResource",
+    "KeepBasePersonal",
+    "KeepChecklistPersonal",
+    "KeepItemPersonal",
+    "KeepItemsPersonal",
     "KeepNote",
     "KeepNoteDraft",
     "KeepNoteList",
+    "KeepNotePersonal",
     "KeepNotesResource",
+    "KeepSubItemPersonal",
     "MailDraft",
     "MailDraftList",
     "MailDraftsResource",
@@ -76,6 +86,8 @@ __all__ = (
     "MailUserProfile",
     "MailUserResource",
     "MailUsersResource",
+    "NotesPartTypes",
+    "keep_now",
     "to_camel_case",
     "to_snake_case",
 )
@@ -1153,3 +1165,634 @@ class KeepNoteList:
 
     def __repr__(self) -> str:
         return f"Notes: {len(self.notes)} | Next Page Token: {self.next_page_token}"
+
+
+# ---------------------------------------------------------------------------
+# Consumer Keep models.
+#
+# These belong to `KeepServicePersonal`, NOT to `KeepService` — the consumer backend is
+# a different API to `keep.googleapis.com` and shares no shapes with it. Hence the
+# `Personal` suffix on every one of them.
+#
+# The wire sends a FLAT array of entries related by `parentId`; a checklist and its
+# entries arrive as separate siblings. Everything an entry needs to describe itself on
+# the wire, but that callers have no business touching, is underscored: `_kind`,
+# `_parent_id`, `_sort_value`, `_base_version`, `_parent_server_id`,
+# `_super_list_item_id`. The untouched payload stays on `_raw`, as everywhere else here.
+# ---------------------------------------------------------------------------
+
+#: The wire's "this never happened" value for a timestamp. `trashed` and `deleted` are
+#: always present and set to this when false, which is why both read as a comparison
+#: rather than a null check.
+KEEP_EPOCH: str = "1970-01-01T00:00:00.000Z"
+
+_KeepChildT = TypeVar("_KeepChildT", bound="KeepBasePersonal")
+
+
+class _KeepPartMeta(type):
+    """Makes construction an identity map — a known id never re-enters `__init__`.
+
+    This has to live on the metaclass rather than in `__new__`. `type.__call__` runs
+    `__init__` on whatever `__new__` returns whenever it is an instance of the class, and
+    for a dataclass the generated `__init__` reassigns *every* field before
+    `__post_init__` can object — so returning a cached instance from `__new__` silently
+    blanks it. Intercepting `__call__` is the only point at which `__init__` can be
+    skipped entirely.
+    """
+
+    def __call__(cls, **kwargs: Any) -> Any:
+        """Return the part already registered under this id, or build a new one.
+
+        Raises
+        -------
+        :exc:`TypeError`
+            If no service was supplied. Nothing outside a service constructs these.
+
+        """
+        service: Any = kwargs.get("_service")
+        if service is None:
+            raise TypeError(f"{cls.__name__} is not constructed directly — use the service.")
+
+        existing: Any = service.get_part(part_id=kwargs["id"])
+        if existing is not None:
+            return existing
+        return super().__call__(**kwargs)
+
+
+def keep_now() -> str:
+    """The current UTC time, in the format the consumer Keep wire uses."""
+    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+class KeepItemsPersonal(MutableSequence[_KeepChildT]):
+    """The owning collection for a Keep object's children.
+
+    `list.append` is a C level method with no interception point, and subclassing `list`
+    catches `append` while silently missing `extend`, `insert`, `+=` and slice
+    assignment. :class:`MutableSequence` inverts that — it *derives* the whole mutating
+    API from a handful of methods, so `append` is `self.insert(len(self), value)`.
+    Overriding :meth:`insert`, :meth:`__setitem__` and :meth:`__delitem__` is therefore
+    provably every write path, and a child cannot be attached without being validated
+    and registered with the service.
+
+    Parameters
+    -----------
+    owner: :class:`KeepBasePersonal`
+        The object these children hang from.
+    expects: type[:class:`KeepBasePersonal`]
+        The only type this collection will accept.
+    on_attach: Callable[[:class:`KeepBasePersonal`], None]
+        Invoked as a child enters. Registers it with the service.
+    on_detach: Callable[[:class:`KeepBasePersonal`], None]
+        Invoked as a child leaves. Deregisters it.
+
+    """
+
+    def __init__(
+        self,
+        owner: KeepBasePersonal,
+        expects: type[_KeepChildT],
+        on_attach: Callable[[_KeepChildT], None],
+        on_detach: Callable[[_KeepChildT], None],
+    ) -> None:
+        self._owner: KeepBasePersonal = owner
+        self._expects: type[_KeepChildT] = expects
+        self._on_attach: Callable[[_KeepChildT], None] = on_attach
+        self._on_detach: Callable[[_KeepChildT], None] = on_detach
+        self._children: list[_KeepChildT] = []
+
+    def insert(self, index: int, value: _KeepChildT) -> None:
+        """The single entry point for every attachment — `append` and `extend` land here."""
+        self._validate(value=value)
+        self._children.insert(index, value)
+        self._wire_parentage(value=value)
+        self._on_attach(value)
+
+    def __getitem__(self, index: Any) -> Any:
+        return self._children[index]
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        self._validate(value=value)
+        self._on_detach(self._children[index])
+        self._children[index] = value
+        self._on_attach(value)
+
+    def __delitem__(self, index: Any) -> None:
+        """Remove an entry and mark it deleted on the wire.
+
+        Dropping it locally is not enough. A checklist payload carries no array of its
+        children — the relationship only exists child->parent via `parentId` — so a
+        removal the server is never told about simply comes back on the next sync. The
+        deletion has to be expressed on the entry itself.
+        """
+        outgoing: _KeepChildT = self._children[index]
+        del self._children[index]
+        outgoing.delete()
+        self._on_detach(outgoing)
+
+    def _wire_parentage(self, value: _KeepChildT) -> None:
+        """Point a child's id keys at this collection's owner.
+
+        Nesting is the asymmetric case: a sub entry's `parentId` is the *checklist* — the
+        owner's own parent — while `superListItemId` names the entry it sits under. Writing
+        both here is what makes moving an entry between owners update the wire correctly.
+        """
+        if self._expects is KeepSubItemPersonal:
+            object.__setattr__(value, "_parent_id", self._owner._parent_id)  # pyright: ignore[reportPrivateUsage]
+            object.__setattr__(value, "_super_list_item_id", self._owner.id)
+        else:
+            object.__setattr__(value, "_parent_id", self._owner.id)
+            if isinstance(value, KeepItemPersonal):
+                object.__setattr__(value, "_super_list_item_id", None)
+
+        # Anything nested under the entry moves with it. Its `parentId` names the
+        # checklist, so a move that only re-pointed the entry would leave its own children
+        # claiming the note they came from. Delegating to their collection keeps the two
+        # cases in one place and would carry through deeper nesting if Keep ever allows it.
+        nested: Union[KeepItemsPersonal[KeepSubItemPersonal], None] = getattr(value, "sub_items", None)
+        if nested is None:
+            return
+        for child in nested:
+            nested._wire_parentage(value=child)
+
+    def __len__(self) -> int:
+        return len(self._children)
+
+    def __repr__(self) -> str:
+        return f"{self._expects.__name__} x{len(self._children)} | Owner: {self._owner.id}"
+
+    def _validate(self, value: _KeepChildT) -> None:
+        """Reject the wrong type, and anything already in this collection.
+
+        Deliberately does NOT check `_parent_id` against the owner. On the wire a
+        sub item's `parentId` is the *checklist*, not the item it nests under — that
+        relationship is carried by `superListItemId` alone. Comparing the two would reject
+        every legitimately nested entry. `parentId` is set from the payload by whoever
+        builds the part, which is the only thing that knows the right answer.
+
+        Parameters
+        -----------
+        value: :class:`KeepBasePersonal`
+            The child being attached.
+
+        Raises
+        -------
+        :exc:`TypeError`
+            If `value` is not an instance of the expected type.
+        :exc:`ValueError`
+            If `value` is already in this collection.
+
+        """
+        if isinstance(value, self._expects) is False:
+            raise TypeError(f"{type(self._owner).__name__} accepts {self._expects.__name__}, got {type(value).__name__}.")
+        if any(child is value for child in self._children):
+            raise ValueError(f"{value.id} is already in {self._owner.id}.")
+
+
+@dataclass(kw_only=True)
+class KeepBasePersonal(metaclass=_KeepPartMeta):
+    """What every consumer Keep object has, whatever its :class:`KeepTypeEnum`.
+
+    Not constructed directly — :class:`_KeepPartMeta` refuses it without a service, and
+    returns the already registered part when the id is known.
+
+    Parameters
+    -----------
+    id: :class:`str`
+        The client generated identifier. Stable for the part's whole life.
+    type: :class:`KeepTypeEnum`
+        Which kind of part this is.
+    _service: :class:`KeepServicePersonal`
+        The service this part belongs to. Required — it is how the part registers itself
+        and how it queues its own edits.
+    _parent_id: :class:`str`
+        The owning part's id, or "root" for a top level note.
+    text: :class:`str`, optional
+        The body, by default "". It lives at this level because an item has text too.
+    timestamps: dict[:class:`str`, :class:`str`], optional
+        The wire's timestamp block, kept as sent. See :meth:`trash` and :meth:`delete`.
+
+    """
+
+    #: Assigning one of these is an edit: it bumps the timestamps and queues the part.
+    #: Anything else is bookkeeping. A field added below that reaches the wire must be
+    #: added here too, or its changes will never be sent.
+    _TRACKED: ClassVar[frozenset[str]] = frozenset({"text", "title", "color", "pinned", "archived", "checked"})
+
+    id: str
+    type: KeepTypeEnum
+    _service: KeepServicePersonal = field(repr=False, compare=False)
+    # Required, but nullable — a part detached from its owner has no parent until it is
+    # attached again, and "root" would be a lie.
+    _parent_id: Union[str, None] = field(repr=False)
+    text: str = ""
+    timestamps: dict[str, str] = field(default_factory=dict)
+
+    _kind: str = field(default="notes#node", repr=False)
+    _sort_value: Union[str, None] = field(default=None, repr=False)
+    _base_version: Union[str, None] = field(default=None, repr=False)
+    _raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _registered: bool = field(default=False, repr=False, compare=False)
+    #: Set the moment any tracked attribute changes. We do not track WHICH fields
+    #: moved — `to_dict()` sends the whole part, so only the final state matters.
+    _dirty: bool = field(default=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Register with the service, then start tracking edits.
+
+        `_registered` is set last on purpose — it is what stops the field assignments the
+        generated `__init__` just made from being mistaken for user edits and queued.
+        """
+        self._service.register_part(part=self)
+        self._registered = True
+
+    @classmethod
+    def from_raw(cls, raw: NotePersonalPartsTyped, service: KeepServicePersonal) -> Union[KeepBasePersonal, None]:
+        """Build the right part for one payload entry, children and all.
+
+        `type` is coerced rather than read straight off `raw`: the TypedDict annotates it
+        as a :class:`KeepTypeEnum`, but `json.loads` yields a plain `str`, so an identity
+        test against an enum member is always False.
+
+        Parameters
+        -----------
+        raw: :class:`NotePersonalPartsTyped`
+            One entry of the `nodes` array.
+        service: :class:`KeepServicePersonal`
+            The owning service. Children are found through its pending payload.
+
+        Returns
+        --------
+        :class:`KeepBasePersonal` | None
+            The part, or None for an attachment — we do not model blobs.
+
+        """
+        part_type: KeepTypeEnum = KeepTypeEnum(raw["type"])
+        if part_type is KeepTypeEnum.blob:
+            return None
+
+        common: dict[str, Any] = {
+            "id": raw["id"],
+            "type": part_type,
+            "_service": service,
+            "_parent_id": raw.get("parentId"),
+            "text": raw.get("text", ""),
+            "timestamps": dict(raw.get("timestamps", {})),
+            "_kind": raw.get("kind", "notes#node"),
+            "_sort_value": raw.get("sortValue"),
+            "_base_version": raw.get("baseVersion"),
+            "_raw": dict(raw),
+        }
+
+        if part_type is KeepTypeEnum.item:
+            nested: type[KeepItemPersonal] = KeepSubItemPersonal if raw.get("superListItemId") is not None else KeepItemPersonal
+            return nested(
+                checked=raw.get("checked", False),
+                _parent_server_id=raw.get("parentServerId"),
+                _super_list_item_id=raw.get("superListItemId"),
+                **common,
+            )
+
+        note: type[KeepNotePersonal] = KeepChecklistPersonal if part_type is KeepTypeEnum.checklist else KeepNotePersonal
+        return note(
+            title=raw.get("title", ""),
+            color=raw.get("color", "DEFAULT"),
+            pinned=raw.get("isPinned", False),
+            archived=raw.get("isArchived", False),
+            label_ids=list(raw.get("labelIds", [])),
+            **common,
+        )
+
+    def _new_collection(self, expects: type[_KeepChildT]) -> KeepItemsPersonal[_KeepChildT]:
+        """Build a child collection wired back to this part's service.
+
+        Attaching queues the child so its new parentage is sent. During a sync fold the
+        service suppresses that, so rebuilding the graph from a response does not
+        immediately queue the whole graph straight back at the server.
+        """
+        return KeepItemsPersonal(
+            owner=self,
+            expects=expects,
+            on_attach=self._service.queue_part,
+            on_detach=self._service.queue_part,
+        )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Bump the edit timestamps and queue the part when a wire backed field changes."""
+        object.__setattr__(self, name, value)
+        if name in self._TRACKED and self._registered is True:
+            stamped: str = keep_now()
+            self.timestamps["updated"] = stamped
+            self.timestamps["userEdited"] = stamped
+            object.__setattr__(self, "_dirty", True)
+            self._service.queue_part(part=self)
+
+    def update(self, raw: NotePersonalPartsTyped) -> None:
+        """Refresh this part's attributes from a server payload.
+
+        Applied by the sync loop when a change arrives for an id we already hold. Writes
+        go through `object.__setattr__` rather than plain assignment — a server change is
+        not a local edit, and queueing it would send it straight back.
+
+        Parameters
+        -----------
+        raw: :class:`NotePersonalPartsTyped`
+            One entry of the `nodes` array.
+
+        """
+        object.__setattr__(self, "_raw", dict(raw))
+        object.__setattr__(self, "_dirty", False)
+        object.__setattr__(self, "text", raw.get("text", self.text))
+        object.__setattr__(self, "timestamps", dict(raw.get("timestamps", self.timestamps)))
+        for attribute, wire_key in (("_sort_value", "sortValue"), ("_base_version", "baseVersion"), ("_parent_id", "parentId")):
+            wire_value: Any = raw.get(wire_key)
+            if wire_value is not None:
+                object.__setattr__(self, attribute, wire_value)
+
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The payload this part was last built from. Read only — a copy each time.
+
+        `to_dict()` overlays onto the stored original rather than this copy, so mutating
+        what you get back here cannot corrupt what goes on the wire.
+        """
+        return dict(self._raw)
+
+    @property
+    def trashed(self) -> bool:
+        """Whether this is in the bin. Keep purges the bin after 7 days."""
+        return self.timestamps.get("trashed", KEEP_EPOCH) > KEEP_EPOCH
+
+    @property
+    def deleted(self) -> bool:
+        """Whether this is marked for permanent removal."""
+        return self.timestamps.get("deleted", KEEP_EPOCH) > KEEP_EPOCH
+
+    def trash(self) -> None:
+        """Send to the bin — recoverable, and what the Keep app's Delete button does."""
+        self._touch(key="trashed", value=keep_now())
+
+    def untrash(self) -> None:
+        """Restore from the bin."""
+        self._touch(key="trashed", value=KEEP_EPOCH)
+
+    def delete(self) -> None:
+        """Mark for permanent removal. Not the same as :meth:`trash`."""
+        self._touch(key="deleted", value=keep_now())
+
+    def undelete(self) -> None:
+        """Clear the permanent removal mark."""
+        self._touch(key="deleted", value=KEEP_EPOCH)
+
+    def _touch(self, key: str, value: str) -> None:
+        """Write a timestamp, bump the edit markers and queue the part.
+
+        The server does not set `updated` for us — a change sent without it may not
+        propagate to the account's other devices. Binning goes through here rather than
+        through `__setattr__` because it writes into `timestamps` rather than replacing a
+        tracked field, so nothing else would notice it.
+        """
+        stamped: str = keep_now()
+        self.timestamps[key] = value
+        self.timestamps["updated"] = stamped
+        self.timestamps["userEdited"] = stamped
+        if self._registered is True:
+            self._service.queue_part(part=self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Build the wire payload, overlaying our fields onto the payload as received.
+
+        Overlaying rather than rebuilding is deliberate — it preserves every key Google
+        sent that we do not model, including ones added after this was written.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The entry, ready to go in the `nodes` array of a `changes` request.
+
+        """
+        payload: dict[str, Any] = dict(self._raw)
+        payload.update({
+            "id": self.id,
+            "kind": self._kind,
+            "type": self.type.value,
+            "parentId": self._parent_id,
+            "text": self.text,
+            "timestamps": self.timestamps,
+        })
+        # A part the server has never seen has neither. Sending them as null is not the
+        # same as omitting them — the absence is how an insert is recognised.
+        optional: tuple[tuple[str, Union[str, None]], ...] = (
+            ("sortValue", self._sort_value),
+            ("baseVersion", self._base_version),
+        )
+        payload.update({wire_key: value for wire_key, value in optional if value is not None})
+        return payload
+
+
+@dataclass(kw_only=True)
+class KeepNotePersonal(KeepBasePersonal):
+    """A top level Keep note — an entry whose `parentId` is "root".
+
+    Parameters
+    -----------
+    title: :class:`str`, optional
+        The note's heading, by default "".
+    color: :class:`str`, optional
+        The swatch name, by default "DEFAULT".
+    pinned: :class:`bool`, optional
+        Whether the note sits pinned above the rest, by default False.
+    archived: :class:`bool`, optional
+        Whether the note is archived out of the main view, by default False.
+    label_ids: list[dict[:class:`str`, :class:`str`]], optional
+        The attached labels, as `{"labelId": ..., "deleted": ...}` pairs. A removed label
+        stays here with a real `deleted` timestamp rather than being dropped — that
+        tombstone is how the removal propagates, so never rebuild this list wholesale.
+
+    """
+
+    title: str = ""
+    color: str = "DEFAULT"
+    pinned: bool = False
+    archived: bool = False
+    label_ids: list[dict[str, str]] = field(default_factory=list)
+
+    def update(self, raw: NotePersonalPartsTyped) -> None:
+        """Refresh the note fields as well as the shared ones.
+
+        A checklist cascades into its own children — see the override below.
+        """
+        super().update(raw=raw)
+        # A plain dict view: the union includes shapes without these keys, so pyright
+        # rightly refuses a dynamic subscript against the TypedDict itself.
+        data: dict[str, Any] = dict(raw)
+        for attribute, wire_key in (("title", "title"), ("color", "color"), ("pinned", "isPinned"), ("archived", "isArchived")):
+            if wire_key in data:
+                object.__setattr__(self, attribute, data[wire_key])
+        if "labelIds" in data:
+            object.__setattr__(self, "label_ids", list(data["labelIds"]))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Build the wire payload, adding the fields only a top level entry carries.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The entry, ready to go in the `nodes` array of a `changes` request.
+
+        """
+        payload: dict[str, Any] = super().to_dict()
+        payload.update({
+            "title": self.title,
+            "color": self.color,
+            "isPinned": self.pinned,
+            "isArchived": self.archived,
+            "labelIds": self.label_ids,
+        })
+        return payload
+
+
+@dataclass(kw_only=True)
+class KeepItemPersonal(KeepBasePersonal):
+    """An entry belonging to a :class:`KeepChecklistPersonal`.
+
+    Parameters
+    -----------
+    checked: :class:`bool`, optional
+        Whether the entry is ticked, by default False.
+    sub_items: :class:`KeepItemsPersonal`, optional
+        Entries nested beneath this one, wired by the service. Keep supports a single
+        level of nesting, so this stays empty on a :class:`KeepSubItemPersonal`.
+
+    """
+
+    checked: bool = False
+    sub_items: KeepItemsPersonal[KeepSubItemPersonal] = field(default=None, repr=False)  # type: ignore[assignment] - wired in __post_init__.
+
+    _parent_server_id: Union[str, None] = field(default=None, repr=False)
+    _super_list_item_id: Union[str, None] = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        """Register, wire the nested collection, then build anything nested under us.
+
+        A nested entry's `parentId` is the *checklist*, not this item — `superListItemId`
+        is the only thing that expresses the nesting.
+        """
+        super().__post_init__()
+        self.sub_items = self._new_collection(expects=KeepSubItemPersonal)
+        for raw in self._service.pending_sub_items(item_id=self.id):
+            child: Union[KeepBasePersonal, None] = KeepBasePersonal.from_raw(raw=raw, service=self._service)
+            if isinstance(child, KeepSubItemPersonal):
+                self.sub_items.append(child)
+
+    def update(self, raw: NotePersonalPartsTyped) -> None:
+        """Refresh the entry fields as well as the shared ones."""
+        super().update(raw=raw)
+        data: dict[str, Any] = dict(raw)
+        fields: tuple[tuple[str, str], ...] = (
+            ("checked", "checked"),
+            ("_parent_server_id", "parentServerId"),
+            ("_super_list_item_id", "superListItemId"),
+        )
+        for attribute, wire_key in fields:
+            if wire_key in data:
+                object.__setattr__(self, attribute, data[wire_key])
+        self.update_children()
+
+    def update_children(self) -> None:
+        """Cascade into anything nested under this entry, from the pending payload."""
+        for child_raw in self._service.pending_sub_items(item_id=self.id):
+            child: Union[KeepBasePersonal, None] = self._service.get_part(part_id=child_raw["id"])
+            if child is not None:
+                child.update(raw=child_raw)
+                continue
+            fresh: Union[KeepBasePersonal, None] = KeepBasePersonal.from_raw(raw=child_raw, service=self._service)
+            if isinstance(fresh, KeepSubItemPersonal):
+                self.sub_items.append(fresh)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Build the wire payload, adding the fields only an entry carries.
+
+        Returns
+        --------
+        dict[:class:`str`, :class:`Any`]
+            The entry, ready to go in the `nodes` array of a `changes` request.
+
+        """
+        payload: dict[str, Any] = super().to_dict()
+        payload["checked"] = self.checked
+        # `superListItemId` is absent rather than null on a top level entry — its presence
+        # is what marks this as nested.
+        optional: tuple[tuple[str, Union[str, None]], ...] = (
+            ("parentServerId", self._parent_server_id),
+            ("superListItemId", self._super_list_item_id),
+        )
+        payload.update({wire_key: value for wire_key, value in optional if value is not None})
+        return payload
+
+
+@dataclass(kw_only=True)
+class KeepSubItemPersonal(KeepItemPersonal):
+    """An entry nested beneath a :class:`KeepItemPersonal`.
+
+    Identical to its parent type on the wire — the only difference is that
+    `superListItemId` is populated. It is its own class so the nesting is visible in the
+    type rather than implied by a field being non-None.
+    """
+
+
+@dataclass(kw_only=True)
+class KeepChecklistPersonal(KeepNotePersonal):
+    """A top level note that owns entries — a `LIST` on the wire.
+
+    A checklist is a note that owns items, so this extends :class:`KeepNotePersonal`
+    rather than sitting beside it.
+
+    Parameters
+    -----------
+    items: :class:`KeepItemsPersonal`, optional
+        The entries, ordered by `_sort_value` and wired by the service. Attach through
+        this collection, never by mutating an underlying list.
+
+    """
+
+    items: KeepItemsPersonal[KeepItemPersonal] = field(default=None, repr=False)  # type: ignore[assignment] - wired in __post_init__.
+
+    def update(self, raw: NotePersonalPartsTyped) -> None:
+        """Refresh this checklist, then cascade into every entry the payload carries.
+
+        The parent already has its children, so an incoming change only has to find the
+        root — each entry it owns is updated in place, and anything new is appended
+        through the collection so it registers on the way in.
+        """
+        super().update(raw=raw)
+        for child_raw in self._service.pending_children(parent_id=self.id):
+            child: Union[KeepBasePersonal, None] = self._service.get_part(part_id=child_raw["id"])
+            if child is not None:
+                child.update(raw=child_raw)
+                continue
+            fresh: Union[KeepBasePersonal, None] = KeepBasePersonal.from_raw(raw=child_raw, service=self._service)
+            if isinstance(fresh, KeepItemPersonal):
+                self.items.append(fresh)
+
+    def __post_init__(self) -> None:
+        """Register, wire the entry collection, then build the entries that belong to us.
+
+        Children are found by id in the service's pending payload — `parentId` says which
+        checklist an entry belongs to, and that is all the wire needs to tell us. Appending
+        goes through :class:`KeepItemsPersonal`, so registration and validation happen on
+        the way in with nothing extra to remember.
+        """
+        super().__post_init__()
+        self.items = self._new_collection(expects=KeepItemPersonal)
+        for raw in self._service.pending_children(parent_id=self.id):
+            child: Union[KeepBasePersonal, None] = KeepBasePersonal.from_raw(raw=raw, service=self._service)
+            if isinstance(child, KeepItemPersonal):
+                self.items.append(child)
+
+
+#: Any one of the four consumer Keep parts, for callers that want to narrow on the
+#: concrete type. The service's own plumbing is typed against `KeepBasePersonal` — a
+#: union cannot accept `Self` from inside the base class, which is where registration
+#: happens.
+NotesPartTypes = Union[KeepNotePersonal, KeepChecklistPersonal, KeepItemPersonal, KeepSubItemPersonal]

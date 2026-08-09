@@ -27,6 +27,7 @@ __all__ = (
     "CalendarColorEnum",
     "EventTransparencyEnum",
     "EventTypeEnum",
+    "KeepTypeEnum",
     "LocalTimeZoneEnum",
     "MailFormatEnum",
     "MailLabelColorEnum",
@@ -84,6 +85,31 @@ class EventTransparencyEnum(StrEnum):
 
     opaque = "opaque"
     transparent = "transparent"
+
+
+class KeepTypeEnum(StrEnum):
+    """The kind of object a consumer Keep payload entry describes.
+
+    This is the wire's `type` field. The names are ours; the values are Google's, and
+    the mismatch is deliberate — a `LIST` on the wire is a Checklist here.
+
+    Enums
+    ------
+    note: str
+        A plain text note. Always top level.
+    checklist: str
+        A note that owns items. Always top level.
+    item: str
+        An entry belonging to a checklist, or to another item when nested.
+    blob: str
+        An attachment — image, drawing or audio.
+
+    """
+
+    note = "NOTE"
+    checklist = "LIST"
+    item = "LIST_ITEM"
+    blob = "BLOB"
 
 
 class LocalTimeZoneEnum(StrEnum):
