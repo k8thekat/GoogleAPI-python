@@ -48,6 +48,10 @@ On first run the wrapper opens a browser for you to authorize, then caches the t
 next to your secret (`calendar_token.json`, `mail_token.json`, `keep_token.json`).
 Those token files are per-service because each one carries different scopes.
 
+> `MailService` looks for `mail_client_secret.json` first, then falls back to
+> `client_secret.json`. Use the dedicated name when your Gmail OAuth client is a
+> different project from your Calendar/Keep one.
+
 > ⚠️ Keep `client_secret.json` and every `*_token.json` out of version control.
 
 ## Configuring via `local.ini`
@@ -72,7 +76,8 @@ from gap import CalendarService
 calendar = CalendarService.from_ini(file=Path("./local.ini"))
 ```
 
-`from_ini` lives on `GoogleService`, so `MailService` and `KeepService` get it too.
+`from_ini` lives on `GoogleService`, so `CalendarService`, `MailService` and `KeepService` all
+get it. `KeepServicePersonal` is not a `GoogleService` subclass and uses its own auth.
 A relative `TOKEN_PATH` is anchored to the ini file, never the CWD — the same config
 resolves the same way no matter which directory you run from. Absolute paths (and `~`)
 are honoured as written.
@@ -118,7 +123,7 @@ directly if you want the pairs without a service attached.
 | `CalendarService` | Calendar v3 | `https://www.googleapis.com/auth/calendar` |
 | `MailService` | Gmail v1 | `gmail.readonly` + `gmail.compose` |
 | `KeepService` | Keep v1 | `https://www.googleapis.com/auth/keep` |
-| `KeepServicePersonal` | Private Android endpoint | Master-token auth via `gpsoauth` |
+| `KeepServicePersonal` | Private Android `notes/v1/changes` | Master-token auth via `gpsoauth` |
 
 > ⚠️ `KeepService` talks to the **official** Keep API, which is a Google Workspace
 > service. It will not authorize a personal Gmail account, and `list_notes()` only
@@ -136,7 +141,7 @@ directly if you want the pairs without a service attached.
 ## Calendar
 
 ```python
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from gap import CalendarColorEnum, CalendarService, EventsDraft, LocalTimeZoneEnum
@@ -148,8 +153,8 @@ data: EventsDraftTyped = {
     "summary": "Google API Test Event",
     "location": "Seattle, Washington",
     "description": "The answer to everything is 42....",
-    "start": {"dateTime": (datetime.now() + timedelta(hours=4)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
-    "end": {"dateTime": (datetime.now() + timedelta(hours=5)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
+    "start": {"dateTime": (datetime.now(tz=UTC) + timedelta(hours=4)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
+    "end": {"dateTime": (datetime.now(tz=UTC) + timedelta(hours=5)).isoformat(), "timeZone": LocalTimeZoneEnum.PST},
     "reminders": {"useDefault": True},
     "colorId": CalendarColorEnum.bold_red,
 }
@@ -204,15 +209,38 @@ print(note.text)
 
 > Requires `pip install gap[personal]` for the `gpsoauth` dependency.
 
+> ⚠️ **Never tested against a live account.** The wire shapes are reconstructed from
+> documentation and canned payloads — `exchange_token()` and the sync loop have never
+> made a real request. See `TODO.md` and `ISSUES.md` for details.
+
+### Obtaining a master token
+
+Sign in at [EmbeddedSetup](https://accounts.google.com/EmbeddedSetup), click "I agree"
+(the page hangs — expected), then read the `oauth_token` cookie (starts with `oauth2_4/`,
+single use):
+
 ```python
 from gap import KeepServicePersonal
 
-keep = KeepServicePersonal(email="you@gmail.com", master_token="aas_et/...")
-keep.sync()
-
-for note in keep.notes.values():
-    print(note.title)
+result = KeepServicePersonal.exchange_token(email="you@gmail.com", oauth_token="oauth2_4/...")
+master_token = result["Token"]  # Store this securely — it is an *account* credential.
 ```
+
+### Syncing and iterating notes
+
+```python
+from gap import KeepNotePersonal, KeepServicePersonal
+
+# Use as a context manager — sync() runs on enter and exit.
+with KeepServicePersonal(email="you@gmail.com", master_token="aas_et/...") as keep:
+    # get_part() looks up any part by id (notes, items, sub-items).
+    note = keep.get_part("some-note-id")
+    if isinstance(note, KeepNotePersonal):
+        print(note.title, note.text)
+```
+
+`dump_state(path)` writes every part's raw payload and the sync cursor to disk —
+useful for recovery and for verifying the wire shapes against a live response.
 
 # Credits
 
