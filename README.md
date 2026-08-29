@@ -116,13 +116,18 @@ directly if you want the pairs without a service attached.
 | Service | Google API | Scope |
 | --- | --- | --- |
 | `CalendarService` | Calendar v3 | `https://www.googleapis.com/auth/calendar` |
-| `MailService` | Gmail v1 | `https://mail.google.com/` |
+| `MailService` | Gmail v1 | `gmail.readonly` + `gmail.compose` |
 | `KeepService` | Keep v1 | `https://www.googleapis.com/auth/keep` |
+| `KeepServicePersonal` | Private Android endpoint | Master-token auth via `gpsoauth` |
 
 > ⚠️ `KeepService` talks to the **official** Keep API, which is a Google Workspace
 > service. It will not authorize a personal Gmail account, and `list_notes()` only
-> returns notes your app created or that were explicitly shared with it. See
-> `TODO.md` for notes on the unofficial personal-account route.
+> returns notes your app created or that were explicitly shared with it.
+
+> ⚠️ `KeepServicePersonal` uses the private Android `notes/v1/changes` endpoint
+> for consumer `@gmail.com` accounts. It is **not** a `GoogleService` subclass —
+> it handles its own auth via `gpsoauth` master-token exchange. Install with
+> `pip install gap[personal]` to pull the `gpsoauth` dependency.
 
 # Usage
 
@@ -183,7 +188,7 @@ message = MailMessage().to_email(
 draft = mail.create_draft(body=message)
 ```
 
-## Keep
+## Keep (Workspace)
 
 ```python
 from pathlib import Path
@@ -193,6 +198,20 @@ from gap import KeepNoteDraft, KeepService
 keep = KeepService(token_path=Path(__file__).parent)
 note = keep.create_note(draft=KeepNoteDraft(title="Groceries", list_items=[("Milk", False), ("Eggs", True)]))
 print(note.text)
+```
+
+## Keep (Personal / consumer)
+
+> Requires `pip install gap[personal]` for the `gpsoauth` dependency.
+
+```python
+from gap import KeepServicePersonal
+
+keep = KeepServicePersonal(email="you@gmail.com", master_token="aas_et/...")
+keep.sync()
+
+for note in keep.notes.values():
+    print(note.title)
 ```
 
 # Credits

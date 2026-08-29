@@ -493,8 +493,8 @@ class CalendarService(GoogleService):
             The created Event as returned by the API.
 
         """
-        temp: HttpRequest = self.service.events().insert(calendarId=event.calendar_id, body=event.to_dict())
-        return Events(calendar_id=event.calendar_id, **temp.execute())
+        request: HttpRequest = self.service.events().insert(calendarId=event.calendar_id, body=event.to_dict())
+        return Events(calendar_id=event.calendar_id, **request.execute())
 
     def delete_event(self, event: Events) -> None:
         """Delete the passed in Event.
@@ -510,17 +510,17 @@ class CalendarService(GoogleService):
             If the API response is not the expected empty body.
 
         """
-        temp: HttpRequest = self.service.events().delete(calendarId=event.calendar_id, eventId=event.id)
+        request: HttpRequest = self.service.events().delete(calendarId=event.calendar_id, eventId=event.id)
         try:
-            res: Any = temp.execute()
+            result: Any = request.execute()
         except HttpError as e:
             LOGGER.warning("<%s.delete_event> | We encountered an error. | %s", type(self).__name__, e)
             return
 
         # A successful delete comes back as an empty body.
-        if not res:
+        if not result:
             return
-        raise ValueError(f"Unexpected response when calling CalendarService.delete_event. | Value: {res}")
+        raise ValueError(f"Unexpected response when calling CalendarService.delete_event. | Value: {result}")
 
     def get_event(self, event_id: str, calendar_id: str = "primary", timezone: Union[LocalTimeZoneEnum, None] = None) -> Events:
         """Retrieve a specific Event.
@@ -541,10 +541,10 @@ class CalendarService(GoogleService):
 
         """
         if timezone is None:
-            temp: HttpRequest = self.service.events().get(calendarId=calendar_id, eventId=event_id)
+            request: HttpRequest = self.service.events().get(calendarId=calendar_id, eventId=event_id)
         else:
-            temp = self.service.events().get(calendarId=calendar_id, eventId=event_id, timeZone=timezone)
-        return Events(calendar_id=calendar_id, **temp.execute())
+            request = self.service.events().get(calendarId=calendar_id, eventId=event_id, timeZone=timezone)
+        return Events(calendar_id=calendar_id, **request.execute())
 
     def get_calendar_events_by_date(
         self,
@@ -586,7 +586,7 @@ class CalendarService(GoogleService):
         if upto_time is None:
             upto_time = datetime.now(tz=UTC) + timedelta(days=30)
 
-        temp: HttpRequest = self.service.events().list(
+        request: HttpRequest = self.service.events().list(
             calendarId=calendar_id,
             timeMin=self._to_rfc3339(value=since_time),
             timeMax=self._to_rfc3339(value=upto_time),
@@ -594,7 +594,7 @@ class CalendarService(GoogleService):
             singleEvents=single_events,
             orderBy=order_by,
         )
-        return EventsList(calendar_id=calendar_id, **temp.execute())
+        return EventsList(calendar_id=calendar_id, **request.execute())
 
     @staticmethod
     def _to_rfc3339(value: datetime) -> str:
@@ -629,19 +629,19 @@ class CalendarService(GoogleService):
             Every Calendar entry across every page of the response.
 
         """
-        temp: list[CalendarList] = []
+        calendars: list[CalendarList] = []
         page_token: Union[str, None] = None
         while True:
-            res = CalendarListEntry(**self.service.calendarList().list(pageToken=page_token).execute())
-            if len(res.events) == 0:
+            page = CalendarListEntry(**self.service.calendarList().list(pageToken=page_token).execute())
+            if len(page.events) == 0:
                 LOGGER.info("<%s.get_calendars> | Unable to find any Calendars in our CalendarList.", type(self).__name__)
-            temp.extend(res.events)
+            calendars.extend(page.events)
 
             # No token means that was the last page — break regardless of what we got.
-            page_token = res.next_page_token
+            page_token = page.next_page_token
             if not page_token:
                 break
-        return temp
+        return calendars
 
     def get_calendar_list(self) -> str:
         """Return a human readable listing of every Calendar available to the account.
@@ -683,14 +683,14 @@ class CalendarService(GoogleService):
                 f"add a `[{INI_CALENDAR_SECTION}]` section to your ini and build with `from_ini()`."
             )
 
-        temp: list[Events] = []
+        all_events: list[Events] = []
         for entry in calendar:
-            res: EventsList = self.get_calendar_events_by_date(calendar_id=entry.get("id", "primary"))
-            if len(res.events) == 0:
-                LOGGER.info("<%s.get_all_events> | No upcoming Events on %s.", type(self).__name__, entry.get("id"))
+            event_list: EventsList = self.get_calendar_events_by_date(calendar_id=entry["id"])
+            if len(event_list.events) == 0:
+                LOGGER.info("<%s.get_all_events> | No upcoming Events on %s.", type(self).__name__, entry["id"])
                 continue
-            temp.extend(res.events)
-        return temp
+            all_events.extend(event_list.events)
+        return all_events
 
     def update_event(self, old_event: Events, event_draft: Union[EventsDraft, EventsDraftTyped]) -> Events:
         """Update an existing Event with the fields from a draft.
@@ -719,12 +719,12 @@ class CalendarService(GoogleService):
         for key, value in changes.items():
             setattr(event, to_snake_case(key), value)
 
-        temp: HttpRequest = self.service.events().update(
+        request: HttpRequest = self.service.events().update(
             calendarId=event.calendar_id,
             eventId=event.id,
             body=event.to_dict(),
         )
-        return Events(calendar_id=event.calendar_id, **temp.execute())
+        return Events(calendar_id=event.calendar_id, **request.execute())
 
 
 class MailService(GoogleService):
@@ -774,8 +774,8 @@ class MailService(GoogleService):
             The account profile.
 
         """
-        temp: HttpRequest = self.service.users().getProfile(userId=user_id)
-        return MailUserProfile(**temp.execute())
+        request: HttpRequest = self.service.users().getProfile(userId=user_id)
+        return MailUserProfile(**request.execute())
 
     def get_labels(self, user_id: str = "me") -> list[MailUserLabel]:
         """Get all the labels on the Mail account, also updating our `LABELS` attribute.
@@ -791,15 +791,15 @@ class MailService(GoogleService):
             Every label on the account.
 
         """
-        temp: dict[str, Any] = self.service.users().labels().list(userId=user_id).execute()
-        res: list[MailUserLabel] = [MailUserLabel(**label) for label in temp.get("labels", [])]
+        response: dict[str, Any] = self.service.users().labels().list(userId=user_id).execute()
+        labels: list[MailUserLabel] = [MailUserLabel(**label) for label in response.get("labels", [])]
 
         # Replace rather than extend — this mirrors the last response, and appending to it
         # gave us every label twice on the second call.
         # Uppercase because it is part of our public surface, but it is a per-instance
         # cache rather than a constant — pyright reads the casing as the latter.
-        self.LABELS = [{"name": label.name, "id": label.id} for label in res]  # pyright: ignore[reportConstantRedefinition]
-        return res
+        self.LABELS = [{"name": label.name, "id": label.id} for label in labels]  # pyright: ignore[reportConstantRedefinition]
+        return labels
 
     def search_messages(
         self,
@@ -863,8 +863,8 @@ class MailService(GoogleService):
         if page_token is not None:
             params["pageToken"] = page_token
 
-        temp: HttpRequest = self.service.users().messages().list(**params)
-        return MailMessageList(**temp.execute())
+        request: HttpRequest = self.service.users().messages().list(**params)
+        return MailMessageList(**request.execute())
 
     def get_message(
         self,
@@ -895,14 +895,14 @@ class MailService(GoogleService):
         """
         try:
             if message_format is None:
-                temp: HttpRequest = self.service.users().messages().get(userId=user_id, id=message_id)
+                request: HttpRequest = self.service.users().messages().get(userId=user_id, id=message_id)
             else:
-                temp = self.service.users().messages().get(userId=user_id, id=message_id, format=message_format)
-            res = MailMessage(**temp.execute())
+                request = self.service.users().messages().get(userId=user_id, id=message_id, format=message_format)
+            message = MailMessage(**request.execute())
         except HttpError as e:
             LOGGER.warning("<%s.get_message> | Failed to get the message %s. | %s", type(self).__name__, message_id, e)
             return None
-        return res
+        return message
 
     def create_draft(self, body: MailMessage, user_id: str = "me") -> MailDraft:
         """Create a Draft from a composed message.
@@ -920,8 +920,8 @@ class MailService(GoogleService):
             The created Draft.
 
         """
-        temp: HttpRequest = self.service.users().drafts().create(userId=user_id, body=body.prepared())
-        return MailDraft(**temp.execute())
+        request: HttpRequest = self.service.users().drafts().create(userId=user_id, body=body.prepared())
+        return MailDraft(**request.execute())
 
     def get_drafts(self, user_id: str = "me", max_results: int = 100) -> MailDraftList:
         """List the Drafts in the mailbox.
@@ -939,8 +939,8 @@ class MailService(GoogleService):
             The Drafts plus any continuation token.
 
         """
-        temp: HttpRequest = self.service.users().drafts().list(userId=user_id, maxResults=max_results)
-        return MailDraftList(**temp.execute())
+        request: HttpRequest = self.service.users().drafts().list(userId=user_id, maxResults=max_results)
+        return MailDraftList(**request.execute())
 
     def get_draft(
         self,
@@ -976,14 +976,14 @@ class MailService(GoogleService):
 
         try:
             if message_format is None:
-                temp: HttpRequest = self.service.users().drafts().get(userId=user_id, id=message_id)
+                request: HttpRequest = self.service.users().drafts().get(userId=user_id, id=message_id)
             else:
-                temp = self.service.users().drafts().get(userId=user_id, id=message_id, format=message_format)
-            res = MailDraft(**temp.execute())
+                request = self.service.users().drafts().get(userId=user_id, id=message_id, format=message_format)
+            draft = MailDraft(**request.execute())
         except HttpError as e:
             LOGGER.warning("<%s.get_draft> | Failed to get the Draft %s. | %s", type(self).__name__, message_id, e)
             return None
-        return res.message
+        return draft.message
 
     def update_draft(self, message_id: str, body: MailMessage, user_id: str = "me") -> MailMessage:
         """Overwrite an existing Draft with a new message.
@@ -1003,9 +1003,9 @@ class MailService(GoogleService):
             The updated Draft's message.
 
         """
-        temp: HttpRequest = self.service.users().drafts().update(userId=user_id, id=message_id, body=body.prepared())
-        res = MailDraft(**temp.execute())
-        return res.message
+        request: HttpRequest = self.service.users().drafts().update(userId=user_id, id=message_id, body=body.prepared())
+        draft = MailDraft(**request.execute())
+        return draft.message
 
     def append_draft(self, message_id: str, body: str, user_id: str = "me") -> Union[MailMessage, None]:
         """Append text to the end of an existing Draft, preserving its headers.
@@ -1026,16 +1026,16 @@ class MailService(GoogleService):
 
         """
         # `full` so we get the parsed headers/body back to rebuild the email from.
-        temp: Union[MailMessage, None] = self.get_draft(
+        existing: Union[MailMessage, None] = self.get_draft(
             message_id=message_id,
             message_format=MailFormatEnum.full,
             user_id=user_id,
         )
-        if temp is None:
+        if existing is None:
             LOGGER.warning("<%s.append_draft> | Failed to find the Draft %s.", type(self).__name__, message_id)
             return None
 
-        return self.update_draft(message_id=message_id, body=temp.update_email(body=body), user_id=user_id)
+        return self.update_draft(message_id=message_id, body=existing.update_email(body=body), user_id=user_id)
 
 
 class KeepService(GoogleService):
@@ -1080,8 +1080,8 @@ class KeepService(GoogleService):
             The created note as returned by the API.
 
         """
-        temp: HttpRequest = self.service.notes().create(body=draft.to_dict())
-        return KeepNote(**temp.execute())
+        request: HttpRequest = self.service.notes().create(body=draft.to_dict())
+        return KeepNote(**request.execute())
 
     def get_note(self, name: str) -> KeepNote:
         """Fetch a single note by resource name.
@@ -1097,8 +1097,8 @@ class KeepService(GoogleService):
             The requested note.
 
         """
-        temp: HttpRequest = self.service.notes().get(name=self._as_resource_name(name=name))
-        return KeepNote(**temp.execute())
+        request: HttpRequest = self.service.notes().get(name=self._as_resource_name(name=name))
+        return KeepNote(**request.execute())
 
     def list_notes(
         self,
@@ -1123,8 +1123,8 @@ class KeepService(GoogleService):
             The page of notes plus any continuation token.
 
         """
-        temp: HttpRequest = self.service.notes().list(pageSize=page_size, filter=note_filter, pageToken=page_token)
-        return KeepNoteList(**temp.execute())
+        request: HttpRequest = self.service.notes().list(pageSize=page_size, filter=note_filter, pageToken=page_token)
+        return KeepNoteList(**request.execute())
 
     def delete_note(self, note: Union[KeepNote, str]) -> None:
         """Delete a note by object, resource name or bare ID.
@@ -1141,17 +1141,17 @@ class KeepService(GoogleService):
 
         """
         name: str = note.name if isinstance(note, KeepNote) else note
-        temp: HttpRequest = self.service.notes().delete(name=self._as_resource_name(name=name))
+        request: HttpRequest = self.service.notes().delete(name=self._as_resource_name(name=name))
         try:
-            res: Any = temp.execute()
+            result: Any = request.execute()
         except HttpError as e:
             LOGGER.warning("<%s.delete_note> | We encountered an error. | %s", type(self).__name__, e)
             return
 
         # A successful delete comes back as an empty body.
-        if not res:
+        if not result:
             return
-        raise ValueError(f"Unexpected response when calling KeepService.delete_note. | Value: {res}")
+        raise ValueError(f"Unexpected response when calling KeepService.delete_note. | Value: {result}")
 
     @staticmethod
     def _as_resource_name(name: str) -> str:
@@ -1159,34 +1159,28 @@ class KeepService(GoogleService):
         return name if name.startswith("notes/") else f"notes/{name}"
 
 
-# ---------------------------------------------------------------------------
-# Consumer Keep.
-#
-# A different API to `keep.googleapis.com` entirely: one endpoint, master token auth via
-# Android's protocol, and a delta sync rather than REST resources. It shares nothing with
-# `KeepService` above, which is why it is not a `GoogleService`.
-# ---------------------------------------------------------------------------
+# * Consumer Keep — NOT a `GoogleService`.
+#   Uses Android master token auth against the consumer backend, not OAuth2.
+#   One endpoint, delta sync rather than REST resources.
 
-#: The only endpoint. Every operation is a delta exchange against it.
+# * The only endpoint. Every operation is a delta exchange against it.
 KEEP_CHANGES_URL: str = "https://www.googleapis.com/notes/v1/changes"
 
 #: The `parentId` a top level note carries.
 KEEP_ROOT: str = "root"
 
-#: What the Android Keep client identifies itself as when minting an access token.
+# * What the Android Keep client identifies itself as when minting an access token.
 KEEP_OAUTH_SCOPES: str = "oauth2:https://www.googleapis.com/auth/memento https://www.googleapis.com/auth/reminders"
 KEEP_ANDROID_APP: str = "com.google.android.keep"
 KEEP_CLIENT_SIG: str = "38918a453d07199354f8b19af05ec6562ced5788"
 
-#: Identifies the client to Google's Android auth endpoint. Must stay constant across
-#: exchanges — the master token is bound to it, and a new value registers a new device.
+# ! Must stay constant — the master token is bound to it; a new value registers a new device.
 ANDROID_ID: str = "0123456789abcdef"
 
-#: Opaque server feature gates. Send verbatim; pruning them changes what comes back.
+# ! Opaque server feature gates. Send verbatim; pruning them changes what comes back.
 CAPABILITIES: tuple[str, ...] = ("NC", "PI", "LB", "AN", "SH", "DR", "TR", "IN", "SNB", "MI", "CO")
 
-#: Neither `requests` nor `httplib2` sets a timeout by default, so a half open connection
-#: blocks forever with no error to catch. Overridable per call via `sync(timeout=...)`.
+# * Default timeout — neither `requests` nor `httplib2` sets one by default.
 REQUEST_TIMEOUT: float = 30.0
 
 
@@ -1197,12 +1191,8 @@ class KeepSyncError(Exception):
 class KeepServicePersonal:
     """Google Keep for a consumer `@gmail.com` account.
 
-    Deliberately NOT a :class:`GoogleService` subclass — this speaks Android master token
-    auth against the consumer backend, so none of that credential handling applies. See
-    :class:`KeepService` for the Workspace API.
-
-    Synchronous, like the rest of the package; wrap calls in `asyncio.to_thread` from
-    async code.
+    NOT a :class:`GoogleService` subclass — uses Android master token auth.
+    See :class:`KeepService` for the Workspace API.
 
     Parameters
     -----------
@@ -1225,8 +1215,7 @@ class KeepServicePersonal:
     QUEUE_INTERVAL: ClassVar[float] = 1.0
 
     def __init__(self, email: str, master_token: str, queue_interval: Union[float, None] = None) -> None:
-        # Fail here rather than on the first sync — the missing dependency is a packaging
-        # problem, and surfacing it at construction keeps it out of the request path.
+        # ! Fail early — missing dependency is a packaging problem.
         if gpsoauth is None:
             raise KeepSyncError(f"{type(self).__name__} needs the `personal` extra: pip install gap[personal]")
 
@@ -1236,19 +1225,17 @@ class KeepServicePersonal:
         self._master_token: str = master_token
         self._access_token: Union[str, None] = None
         self._version: Union[str, None] = None
-        # Identifies this client session to the server; not a secret and never used for auth.
+        # * Client session identifier — not a secret, never used for auth.
         session_suffix: int = randrange(1000000000, 9999999999)  # noqa: S311
         self._session_id: str = f"s--{int(datetime.now(tz=UTC).timestamp() * 1000)}--{session_suffix}"
 
-        #: Every part that exists, keyed by id. See `KeepBasePersonal.__post_init__`.
+        # * Every part that exists, keyed by id.
         self._parts: dict[str, KeepBasePersonal] = {}
-        #: Parts with unsent edits, keyed by id so repeated edits coalesce into one entry.
+        # * Parts with unsent edits — keyed by id so repeated edits coalesce.
         self._queued: dict[str, KeepBasePersonal] = {}
-        #: The current fold's entries, collapsed by id. Parts read their own children out
-        #: of this while building; empty at every other moment.
+        # * Current fold's entries by id. Empty outside of `_build_parts()`.
         self._pending: dict[str, NotePersonalPartsTyped] = {}
-        #: True while folding a server response. Changes arriving FROM the server are not
-        #: edits, and queueing them would send the whole graph straight back.
+        # * True while folding a server response — suppresses queueing server changes back.
         self._applying: bool = False
 
     @classmethod
@@ -1291,8 +1278,7 @@ class KeepServicePersonal:
 
     @version.setter
     def version(self, value: Union[str, None]) -> None:
-        # "" is not a documented value for `targetVersion`; collapse it so exactly one
-        # thing means "I know nothing" and the payload builder has a single case to test.
+        # * Collapse "" to None — single "I know nothing" value for the payload builder.
         self._version = value or None
 
     def __enter__(self) -> Self:
@@ -1303,9 +1289,7 @@ class KeepServicePersonal:
         """Flush on the way out. Errors propagate — a failed sync must not look clean."""
         self.sync()
 
-    # -----------------------------------------------------------------------
-    # Part bookkeeping. The models call these; callers should not need to.
-    # -----------------------------------------------------------------------
+    # * Part bookkeeping — called by models, not by callers.
     def get_part(self, part_id: str) -> Union[KeepBasePersonal, None]:
         """Look a part up by id. Local only — never a request."""
         return self._parts.get(part_id)
@@ -1354,15 +1338,11 @@ class KeepServicePersonal:
         path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         LOGGER.info("<%s.dump_state> | Wrote %s parts. | %s", type(self).__name__, len(self._parts), path)
 
-    # -----------------------------------------------------------------------
-    # Sync.
-    # -----------------------------------------------------------------------
+    # * Sync.
     def sync(self, **params: Any) -> None:
         """Exchange queued edits with the server and fold the response into the graph.
 
-        Runs until the server stops setting `truncated`. Nothing is applied and the cursor
-        does not move until every page is in hand, so a failure part way through leaves
-        the graph exactly as it was — and the queue intact, so the next call retries.
+        Failure leaves the graph and queue untouched — the next call retries.
 
         Parameters
         -----------
@@ -1377,11 +1357,10 @@ class KeepServicePersonal:
             edits are still queued.
 
         """
-        # Edits ride the first request only; later pages are pure reads.
+        # * Edits ride the first request only; later pages are pure reads.
         outbound: list[dict[str, Any]] = [part.to_dict() for part in self._queued.values()]
         pages: list[NotePersonalPartsTyped] = []
-        # Local until the whole exchange succeeds. Committing per page would advance the
-        # cursor past changes that were never applied, and they are never sent again.
+        # * Local cursor until the whole exchange succeeds.
         version: Union[str, None] = self._version
 
         while True:
@@ -1394,8 +1373,7 @@ class KeepServicePersonal:
             outbound = []
 
             if response.get("forceFullResync") is True:
-                # Our cursor is unusable. Drop it and start over from cold — the queue is
-                # still full, so the pending edits go out again on the retry.
+                # ! Cursor unusable — restart cold. Pending edits go out on the retry.
                 LOGGER.warning("<%s.sync> | Full resync demanded; restarting cold. | %s", type(self).__name__, self.email)
                 self.version = None
                 self.sync(**params)
@@ -1437,7 +1415,7 @@ class KeepServicePersonal:
         payload: dict[str, Any] = self._build_payload(nodes=nodes, version=version)
         response: requests.Response = requests.post(KEEP_CHANGES_URL, json=payload, headers=self._headers(), **params)  # noqa: S113
 
-        # One retry, and only for an expired token — anything else is a real failure.
+        # * One retry for an expired token only.
         if response.status_code == HTTPStatus.UNAUTHORIZED:
             LOGGER.info("<%s._post> | Access token expired; refreshing. | %s", type(self).__name__, self.email)
             self._refresh_access_token()
@@ -1459,8 +1437,7 @@ class KeepServicePersonal:
             If Google returns no `Auth` value.
 
         """
-        # `__init__` already refused construction without it; this is here so the type
-        # checker can narrow the module level Optional, which it cannot do across methods.
+        # * Narrowing guard — `__init__` already refused, but pyright can't see across methods.
         if gpsoauth is None:  # pragma: no cover - unreachable via __init__.
             raise KeepSyncError(f"{type(self).__name__} needs the `personal` extra: pip install gap[personal]")
 
@@ -1494,9 +1471,7 @@ class KeepServicePersonal:
             payload["targetVersion"] = version
         return payload
 
-    # -----------------------------------------------------------------------
-    # Building.
-    # -----------------------------------------------------------------------
+    # * Building.
     def pending_children(self, parent_id: str) -> list[NotePersonalPartsTyped]:
         """Entries in the current fold belonging to `parent_id` and not nested under another."""
         return [raw for raw in self._pending.values() if raw.get("parentId") == parent_id and raw.get("superListItemId") is None]
@@ -1508,11 +1483,8 @@ class KeepServicePersonal:
     def _build_parts(self, raws: list[NotePersonalPartsTyped]) -> None:
         """Fold a whole exchange's worth of entries into the graph.
 
-        The pages are collapsed into one dict keyed by id first, so ordering stops
-        mattering — a later page wins, and every entry is reachable before anything is
-        built. Only top level entries are constructed here: `parentId == "root"` is what
-        identifies them, and each one builds its own children out of `_pending`, exactly
-        as :class:`MailMessagePart` recurses into its own `parts`.
+        Pages are collapsed by id first so ordering does not matter. Only root entries
+        are constructed here — each one builds its own children from `_pending`.
         """
         self._pending = {raw["id"]: raw for raw in raws}
         self._applying = True
@@ -1533,12 +1505,7 @@ class KeepServicePersonal:
     def _update_orphans(self) -> None:
         """Apply entries whose owner was not a root in this payload.
 
-        An incremental delta often carries a single item with no note beside it; the owner
-        is already in `_parts` from an earlier sync, so the entry takes its update in place.
-
-        An entry whose owner cannot be found anywhere is DISCARDED — without a parent it
-        cannot be displayed or related to anything, so tracking it only grows the map with
-        data we can never use.
+        Entries with no discoverable owner are discarded.
         """
         for raw in self._pending.values():
             if raw.get("parentId") == KEEP_ROOT:

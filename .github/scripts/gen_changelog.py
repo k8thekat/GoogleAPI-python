@@ -7,16 +7,16 @@ import sys
 
 # Unique information for the project.
 user = "k8thekat"
-gitHub_repo_name: str = "Template_Repo"
-project_name: str = "Template Name"
+gitHub_repo_name: str = "GoogleAPI-python"
+project_name: str = "gap"
 project_dir: pathlib.Path = pathlib.Path().joinpath(project_name)
-project_branch: str = "development"
+project_branch: str = "main"
 repo_url = f"https://github.com/k8thekat/{gitHub_repo_name}"
 
 # New Repo Initialization only.
 _flag: bool = False
 # Development/etc flag
-_ignore: bool = True
+_ignore: bool = False
 
 if _ignore is True:  # pyright: ignore[reportUnnecessaryComparison] # Purely for template branch.
     sys.exit(1)

@@ -25,13 +25,25 @@ blocking. Callers who need async should wrap calls in `asyncio.to_thread`.
   (`CalendarService`, `MailService`, `KeepService`) declare `service_name`,
   `service_version`, `token_name` and `SCOPES` as `ClassVar`s and add endpoint methods.
   **Never re-implement the credential dance in a subclass.**
-- **`gap/modules.py`** — two distinct kinds of class, do not conflate them:
-  1. **Resource shims** (`*Resource`, subclass `googleapiclient.discovery.Resource`) exist
-     purely so the dynamically-built client typechecks. They have no state and their
-     methods are `return super().<name>(**kwargs)  # type: ignore`.
-  2. **Data models** (`Events`, `EventsList`, `MailMessage`, `KeepNote`, ...) are plain
-     classes built from a JSON response. They hold the raw payload in `_raw` and expose
-     attributes.
+- **`gap/modules.py`** — re-export hub. The models, Resource shims and utility functions
+  are split across `_utils.py`, `_resources.py`, `_calendar.py`, `_mail.py` and `_keep.py`.
+  This file re-exports every public name so existing code that imports from `gap.modules`
+  continues to work unchanged.
+  - **`gap/_utils.py`** — `to_snake_case()` / `to_camel_case()` and the `_IRREGULAR_FIELDS`
+    map. No internal package imports; this is the leaf dependency.
+  - **`gap/_resources.py`** — Resource typing shims (`*Resource`, subclass
+    `googleapiclient.discovery.Resource`). They are never instantiated by us; `build()`
+    hands back real Resource objects at runtime. Their methods are all
+    `return super().<name>(**kwargs)  # type: ignore`.
+  - **`gap/_calendar.py`** — Calendar data models: `CalendarList`, `CalendarListEntry`,
+    `Events`, `EventsList`, `EventsDraft`.
+  - **`gap/_mail.py`** — Mail data models: `MailMessage`, `MailMessageBody`,
+    `MailMessageHeader`, `MailMessagePart`, `MailDraft`, `MailDraftList`, `MailMessageList`,
+    `MailUserLabel`, `MailUserProfile`.
+  - **`gap/_keep.py`** — Keep data models for both Workspace (`KeepNote`, `KeepNoteDraft`,
+    `KeepNoteList`) and consumer/personal (`KeepBasePersonal`, `KeepNotePersonal`,
+    `KeepChecklistPersonal`, `KeepItemPersonal`, `KeepSubItemPersonal`,
+    `KeepItemsPersonal`).
 - **Casing is a boundary, not a preference.** Google speaks camelCase; our attributes are
   snake_case. Data models convert on the way in with `to_snake_case()` in their `setattr`
   loop, and `to_dict()` / `prepared()` convert back with `to_camel_case()` — the API only

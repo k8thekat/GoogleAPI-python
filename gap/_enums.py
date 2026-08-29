@@ -31,7 +31,7 @@ __all__ = (
     "LocalTimeZoneEnum",
     "MailFormatEnum",
     "MailLabelColorEnum",
-    "MailLabelListVisiblityEnum",
+    "MailLabelListVisibilityEnum",
     "MailMessageListVisibilityEnum",
     "MailTypeEnum",
 )
@@ -150,12 +150,17 @@ class MailMessageListVisibilityEnum(StrEnum):
     hide = "hide"
 
 
-class MailLabelListVisiblityEnum(StrEnum):
+class MailLabelListVisibilityEnum(StrEnum):
     """Whether the label itself shows in the label list."""
 
     label_show = "labelShow"
     label_show_if_unread = "labelShowIfUnread"
     label_hide = "labelHide"
+
+
+# TODO: Remove in the next major version.
+#  Backwards compatible alias for the typo in the original class name.
+MailLabelListVisiblityEnum = MailLabelListVisibilityEnum
 
 
 class MailTypeEnum(StrEnum):

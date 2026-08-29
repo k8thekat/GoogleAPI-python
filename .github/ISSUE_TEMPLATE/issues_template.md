@@ -74,7 +74,7 @@ If applicable, add screenshots to help explain your problem...
 Add any other context about the problem here...
 
 
-[Repo]: https://github.com/k8thekat/{project_name}
-[Issues]: https://github.com/k8thekat/{project_name}/issues?q=is%3Aissue+is%3Aclosed
+[Repo]: https://github.com/k8thekat/GoogleAPI-python
+[Issues]: https://github.com/k8thekat/GoogleAPI-python/issues?q=is%3Aissue+is%3Aclosed
 
-[Changelog]: https://github.com/k8thekat/{project_name}/blob/{branch}/CHANGELOG.md
+[Changelog]: https://github.com/k8thekat/GoogleAPI-python/blob/main/CHANGELOG.md

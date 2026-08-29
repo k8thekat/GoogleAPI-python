@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         KeepTypeEnum,
         LocalTimeZoneEnum,
         MailLabelColorEnum,
-        MailLabelListVisiblityEnum,
+        MailLabelListVisibilityEnum,
         MailMessageListVisibilityEnum,
         MailTypeEnum,
     )
@@ -214,7 +214,7 @@ class MailLabelTyped(TypedDict, total=False):
     id: str
     name: str
     messageListVisibility: MailMessageListVisibilityEnum
-    labelListVisibility: MailLabelListVisiblityEnum
+    labelListVisibility: MailLabelListVisibilityEnum
     type: MailTypeEnum
     messagesTotal: int
     messagesUnread: int

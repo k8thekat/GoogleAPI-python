@@ -2,7 +2,7 @@ name: changelog
 
 on:
   push:
-    branches: [ developer ]
+    branches: [ main ]
 
 jobs:
   build:

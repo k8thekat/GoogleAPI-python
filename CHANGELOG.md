@@ -1,5 +1,89 @@
 # Changelog
 
+## Style pass and typo fix
+
+# gap/services.py
+- Renamed generic `temp`/`res` variables to descriptive names (`request`, `calendars`, `all_events`, `labels`, `message`, `draft`, etc.)
+- Changed `CalendarID.get("id")` to direct `["id"]` access on required TypedDict keys.
+- Trimmed verbose block comments and section dividers to match AMPAPI style.
+- Added Better Comments tags (`# *`, `# !`) for highlights and warnings.
+
+# gap/_enums.py
+- Fixed `MailLabelListVisiblityEnum` typo to `MailLabelListVisibilityEnum`.
+    - Added backwards-compat alias for the old name.
+
+# gap/_types.py
+- Updated import and annotation for `MailLabelListVisibilityEnum`.
+
+# gap/_mail.py
+- Updated import and annotation for `MailLabelListVisibilityEnum`.
+- Trimmed section header.
+
+# gap/_utils.py
+- Trimmed verbose block comments (field conversion, `_IRREGULAR_FIELDS`, `@lru_cache`) to concise `# *` style.
+
+# gap/_resources.py
+- Trimmed module header from 7 lines to 2.
+
+# gap/_calendar.py
+- Added `# !` tags on `_LOCAL_ATTRS` comments.
+- Added `# ?SUGGESTION` comment on `CalendarListEntry.events` naming.
+
+# gap/_keep.py
+- Trimmed module headers, consumer section header, and verbose docstrings.
+- Added Better Comments tags throughout.
+
+# gap/__init__.py
+- Version bump to 5.0.1.
+
+## Module split and scaffolding conformance
+
+# gap/modules.py
+- Rewritten as a thin re-export hub; all models, Resource shims and utility functions now live in their own files.
+
+# gap/_utils.py
+- Extracted `to_snake_case()`, `to_camel_case()` and the `_IRREGULAR_FIELDS` map.
+
+# gap/_resources.py
+- Extracted all 10 Resource typing shims.
+
+# gap/_calendar.py
+- Extracted Calendar data models: `CalendarList`, `CalendarListEntry`, `Events`, `EventsList`, `EventsDraft`.
+
+# gap/_mail.py
+- Extracted Mail data models: `MailMessage`, `MailMessageBody`, `MailMessageHeader`, `MailMessagePart`, `MailDraft`, `MailDraftList`, `MailMessageList`, `MailUserLabel`, `MailUserProfile`.
+
+# gap/_keep.py
+- Extracted Keep data models for Workspace and consumer/personal.
+
+# .github/scripts/gen_changelog.py
+- Filled in template values: repo name, package name, branch.
+- Set `_ignore = False` so the workflow actually runs.
+
+# .github/ISSUE_TEMPLATE/issues_template.md
+- Replaced `{project_name}` and `{branch}` placeholders.
+
+# .github/workflows/changelog.yml
+- Changed trigger branch from `developer` to `main`.
+
+# build.bash
+- Replaced `python -m build` with `uv build`.
+
+# Build Notes.md
+- Deleted; the build script is self-documenting.
+
+# README.md
+- Fixed MailService scope from `https://mail.google.com/` to `gmail.readonly` + `gmail.compose`.
+- Added `KeepServicePersonal` to the services table and a usage section.
+
+# CLAUDE.md
+- Updated Architecture section to document the new file layout.
+
+# TODO.md
+- Moved items from `gap/modules.py` to their new file sections.
+
+---
+
 ## 5.0.0
 
 > ⚠️ **Breaking release**, and still `development` — not yet fully tested against a live
