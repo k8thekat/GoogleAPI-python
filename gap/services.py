@@ -1367,7 +1367,7 @@ class KeepServicePersonal:
             try:
                 response: NotePersonalResponse = self._post(nodes=outbound, version=version, **params)
             except Exception as e:
-                LOGGER.exception("<%s.sync> | Exchange failed; graph and queue untouched. | %s", type(self).__name__, self.email)
+                LOGGER.warning("<%s.sync> | Exchange failed; graph and queue untouched. | %s", type(self).__name__, self.email, exc_info=e)
                 raise KeepSyncError(f"Sync failed for {self.email}.") from e
 
             outbound = []

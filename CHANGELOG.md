@@ -1,5 +1,10 @@
 # Changelog
 
+## Keep sync log level fix
+
+# gap/services.py
+- Lowered `KeepServicePersonal.sync` exchange failure log from `exception` to `warning`; the caller handles the error and a full traceback at ERROR is noisy during initial setup.
+
 ## Style pass and typo fix
 
 # gap/services.py

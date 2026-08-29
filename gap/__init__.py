@@ -26,7 +26,7 @@ from __future__ import annotations
 __title__ = "GAP - GoogleAPI-Python"
 __author__ = "k8thekat"
 __license__ = "GNU"
-__version__ = "5.0.3"
+__version__ = "5.0.4"
 __credits__ = "Google and related packages around their API."
 
 from typing import Literal, NamedTuple
