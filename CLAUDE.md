@@ -1,0 +1,100 @@
+# CLAUDE.md
+
+Guidance for Claude Code when working in the GoogleAPI-Python (`gap`) repository.
+
+## Purpose
+
+`gap` is a typed Python wrapper around Google's API client libraries — Calendar v3,
+Gmail v1 and Keep v1. It is **synchronous**; the underlying `googleapiclient` is
+blocking. Callers who need async should wrap calls in `asyncio.to_thread`.
+
+## Tooling
+
+- **Package manager:** `uv`. Use `uv sync`, or `uv pip install -e .` / `-e .[personal]`.
+  Dependencies live in `pyproject.toml`; there is no `requirements.txt`.
+- **Build backend:** `setuptools>=61`, dynamic version pulled from `gap.__version__`.
+  Run `build.bash` — it verifies the VENV and the `__init__.py` version before tagging.
+- **Type checking:** Pyright **strict**, Python 3.12, venv pinned to `./.venv`.
+- **Linting:** Ruff, line length **140**. Respect the configured ignore list in
+  `pyproject.toml` rather than "fixing" suppressed rules.
+
+## Architecture
+
+- **`gap/services.py`** — the callable surface. `GoogleService` is the base class that
+  owns the OAuth2 flow (token load → refresh → local-server login → cache). Subclasses
+  (`CalendarService`, `MailService`, `KeepService`) declare `service_name`,
+  `service_version`, `token_name` and `SCOPES` as `ClassVar`s and add endpoint methods.
+  **Never re-implement the credential dance in a subclass.**
+- **`gap/modules.py`** — re-export hub. The models, Resource shims and utility functions
+  are split across `_utils.py`, `_resources.py`, `_calendar.py`, `_mail.py` and `_keep.py`.
+  This file re-exports every public name so existing code that imports from `gap.modules`
+  continues to work unchanged.
+  - **`gap/_utils.py`** — `to_snake_case()` / `to_camel_case()` and the `_IRREGULAR_FIELDS`
+    map. No internal package imports; this is the leaf dependency.
+  - **`gap/_resources.py`** — Resource typing shims (`*Resource`, subclass
+    `googleapiclient.discovery.Resource`). They are never instantiated by us; `build()`
+    hands back real Resource objects at runtime. Their methods are all
+    `return super().<name>(**kwargs)  # type: ignore`.
+  - **`gap/_calendar.py`** — Calendar data models: `CalendarList`, `CalendarListEntry`,
+    `Events`, `EventsList`, `EventsDraft`.
+  - **`gap/_mail.py`** — Mail data models: `MailMessage`, `MailMessageBody`,
+    `MailMessageHeader`, `MailMessagePart`, `MailDraft`, `MailDraftList`, `MailMessageList`,
+    `MailUserLabel`, `MailUserProfile`.
+  - **`gap/_keep.py`** — Keep data models for both Workspace (`KeepNote`, `KeepNoteDraft`,
+    `KeepNoteList`) and consumer/personal (`KeepBasePersonal`, `KeepNotePersonal`,
+    `KeepChecklistPersonal`, `KeepItemPersonal`, `KeepSubItemPersonal`,
+    `KeepItemsPersonal`).
+- **Casing is a boundary, not a preference.** Google speaks camelCase; our attributes are
+  snake_case. Data models convert on the way in with `to_snake_case()` in their `setattr`
+  loop, and `to_dict()` / `prepared()` convert back with `to_camel_case()` — the API only
+  ever sees its own spelling. The conversion is its own inverse for every key shape these
+  APIs use; `_IRREGULAR_FIELDS` is where a field that converts *correctly but unreadably*
+  gets spelled by hand (`iCalUID` → `ical_uid`, not `i_cal_u_i_d`). Add a pair there
+  rather than special casing a call site. Anything held as a raw `dict` — `Events.start`, a Keep note `body`,
+  a `reminders` payload — keeps the API's keys, because it *is* the API's structure.
+- **`gap/_types.py`** — `TypedDict` definitions mirroring the API's JSON shapes. These are
+  request bodies rather than our attributes, so field names match Google's camelCase
+  exactly; do not snake_case them.
+- **`gap/_enums.py`** — `StrEnum`/`IntEnum` for API constant values.
+- **`local.py`** — developer driver, gitignored, not shipped.
+
+## Docstring Format
+
+Always use NumPy-style docstrings as defined by `gap/numpy_templates/numpy_overwrite.mustache`.
+
+- Parameters use `name: :class:`Type`` on one line, description indented below.
+- Optional/keyword params append `, optional` and include `by default {{value}}`.
+- Return type uses `:class:`Type`` followed by an indented description.
+- Underline lengths follow the template (one character longer than the heading).
+
+```python
+def example(path: Path, value: str | None = None) -> dict[str, str]:
+    """Short one-line description.
+
+    Parameters
+    -----------
+    path: :class:`Path`
+        Description of path.
+    value: :class:`str | None`, optional
+        Description of value, by default None.
+
+    Returns
+    --------
+    dict[:class:`str`, :class:`str`]
+        Description of return value.
+
+    """
+```
+
+Never leave the autoDocstring `_description_` / `_type_` placeholders in committed code.
+
+## Conventions
+
+- Every module carries the GPL header block (see `gap/__init__.py`).
+- `from __future__ import annotations` at the top of every module.
+- Logging via a module-level `LOGGER: logging.Logger = logging.getLogger(__name__)`.
+  **No `print()` in the package** — `local.py` is the only place that is acceptable.
+- Log with `%s` lazy formatting, not f-strings.
+- Raise with real formatted messages: `raise ValueError(f"...{value}")`, never
+  `raise ValueError("...%s", value)` — the second form silently stores a tuple.
+- `TODO.md` uses ⭐ done, 🗨 suggestion, ⚠️ issue, ⛔ deprecated/removed.

@@ -4,75 +4,120 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gap"
-dynamic = ["version", "dependencies"]
+dynamic = ["version"]
 authors = [
     { name = "k8thekat", email = "Cadwalladerkatelynn@gmail.com" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 description = "A Python wrapper for the Google API."
 requires-python = ">=3.12.0"
+# Floors, not pins. `gap` is a library: an `==` here makes it un-installable alongside
+# anything else that wants a different google-api-python-client.
+dependencies = [
+    "google-api-python-client>=2.198.0",
+    "google-auth-oauthlib>=1.4.0",
+    "protobuf>=7.35.1",
+    # Imported at module scope by `services.py`. Present transitively via
+    # google-auth-oauthlib -> requests-oauthlib, but declared because we import it.
+    "requests>=2.34.2",
+]
 license = { file = "LICENSE" }
+# PyPi Classifiers.
+# https://pypi.org/classifiers/
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.12",
-    "Framework :: AsyncIO",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-keywords = ["google", "api"]
+keywords = ["google", "api", "calendar", "gmail", "keep"]
+
+[project.optional-dependencies]
+# Consumer Keep support (`KeepServicePersonal`) only. It authenticates against Google's
+# private Android endpoint with a master token, which none of the official libraries do —
+# so the dependency stays out of the base install for the majority who only want the
+# Calendar, Gmail and Workspace Keep services.
+#
+#   pip install gap[personal]
+#
+# Without it `gap` still imports cleanly; constructing `KeepServicePersonal` and calling
+# `exchange_token` raise `KeepSyncError` telling you to install the extra.
+personal = ["gpsoauth>=2.0.0"]
 
 [project.urls]
 GitHub = "https://github.com/k8thekat/GoogleAPI-python"
+Issues = "https://github.com/k8thekat/GoogleAPI-python/issues"
 
 [tool.setuptools.dynamic]
-dependencies = { file = "requirements.txt" }
 version = { attr = "gap.__version__" }
 
 [tool.setuptools]
 packages = ["gap"]
 include-package-data = true
 
+[tool.setuptools.package-data]
+gap = ["py.typed", "numpy_templates/*.mustache"]
+
 [tool.ruff]
 target-version = "py312"
-line-length = 125
+line-length = 140
 
 [tool.ruff.lint]
 exclude = ["docs/extensions/*.py", "logs"]
-select = [
-    "A",
-    "C4",
-    "F",
-    "G",
-    "I",
-    "PTH",
-    "RUF",
-    "SIM",
-    "TC",
-    "UP",
-    "W",
-    "PERF",
-    "ANN",
-]
+select = ["ALL"]
 ignore = [
+    "ANN401",
+    "ASYNC240", # Because Umbra said "f anyio~"
+    "C901", # Too complex functions.
+    "COM812", # Trailing comma rule that fights the formatter.
+    "CPY001", # We carry the GPL header, not a one line copyright notice.
+    "D105", # Magic methods (`__repr__` etc) do not need their own docstring.
+    "D107", # `__init__` params are documented on the class docstring instead.
+    "D203", # Incompatible with D211, which we keep.
+    "D213", # Incompatible with D212, which we keep.
+    "D409", # Our numpy template uses longer section underlines on purpose.
+    "EM101", # We want the message inline at the `raise`, not hoisted to a variable.
+    "EM102", # Same as EM101 but for f-strings.
+    "PGH004", # `# ruff: noqa` in `__init__.py` is deliberate.
+    "S105", # False positives on our `*_token.json` filename constants.
+    "TRY003", # Long messages at the `raise` site are exactly what we want.
+    "D401", # Ignore "Imperative Mood" statement for docstrings.
+    "ERA001", # Ignore commented out code.
+    "FBT001", # Ignore "bool" type arguments and limited functionality statement.
+    "FBT002", # Ignore "bool" type arguments and limited functionality statement.
+    "FIX002", # Ignore TODO's telling you to "fix them".
     "F401",
     "F402",
     "F403",
     "F405",
     "PERF203",
+    "PLR",
     "RUF001",
+    "RUF002", # The character U+2013 "–" could be confused with the ASCII character U+002d "-", which is more common in source code.
+    "RUF003", # Same as RUF002 but for "COMMENTS".
     "RUF009",
-    "SIM105",
-    "UP034",
-    "UP038",
-    "UP007",
-    "ANN401",
     "RUF052", # for filtering "local dummy variable is accessed" eg. - vars using `_`
+    "SIM105",
+    "SLF001", # private function/attribute usage outside of the class it was defined.
+    "TD002", # Ignore TODO's not having a link/url to an issue.
+    "TD003", # Ignore TODO's not having a link/url to an issue.
+    "TRY400", # Ignoring forced `logging.exception` statements when using try/except.
+    "T201", # Ignore print statements.
+    "UP007",
+    "UP034",
+    "UP045", # Type var `Optional[X]` vs `X | None`
+    # --- GAP specific ---------------------------------------------------
+    # Google's API fields are camelCase; our models mirror them 1:1 so a
+    # response can be splatted straight onto the class.
+    "N802",
+    "N803",
+    "N815",
 ]
 
 [tool.ruff.lint.isort]
@@ -88,8 +133,19 @@ mark-parentheses = false
 parametrize-names-type = "tuple"
 
 [tool.pyright]
-useLibraryCodeForTypes = true
-typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"
 pythonVersion = "3.12"
+include = ["gap"]
+exclude = ["logs/**", "**/.venv/**", "**/node_modules", "**/__pycache__", "**/.*", "build/**"]
+useLibraryCodeForTypes = true
 reportIncompatibleMethodOverride = false
-exclude = ["logs/**", "**/.venv/**"]
+# `googleapiclient` ships no type information — `Resource` is built dynamically at
+# runtime and `HttpRequest.execute()` returns Unknown. Under strict that floods every
+# call site with noise we cannot fix from here, so the Unknown-* reports are off.
+# Everything WE write is still fully checked.
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false

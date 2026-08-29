@@ -1,9 +1,94 @@
-*.vscode/
-*.json
-**__pycache__**
-*.venv/
+# --- Google credentials -------------------------------------------------
+# NEVER commit these. The client secret is your OAuth app identity and the
+# token files are live, refreshable access to the authorized account.
+client_secret.json
+*_secret.json
+*_token.json
 calendar_ids.py
-*build
-*dist
-*local.py
+local.ini
 
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Sphinx documentation
+docs/_build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# SQLite
+*.sqlite
+*.sqlite2
+*.sqlite3
+
+# Cache
+cache/
+
+# Project specific
+*logs
+*local_data/
+_responses/
